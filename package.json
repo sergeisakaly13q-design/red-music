@@ -1,0 +1,13 @@
+{
+  "name": "red-music-ready",
+  "version": "3.8.4",
+  "private": true,
+  "description": "Red Music local web project",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
