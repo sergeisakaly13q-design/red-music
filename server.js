@@ -1,0 +1,269 @@
+require("dotenv").config();
+const express = require("express");
+const path = require("path");
+const fs = require("fs");
+const cookieParser = require("cookie-parser");
+
+const { db, ensureSchema, STORAGE_DIR } = require("./db/database");
+const createAuthRouter = require("./routes/auth");
+const createRolesRouter = require("./routes/roles");
+const createMusicRouter = require("./routes/music");
+const createHistoryRouter = require("./routes/history");
+const createPopularRouter = require("./routes/popular");
+const createLogsRouter = require("./routes/logs");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+/* Red Music API access from Capacitor/Android. */
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  const allowedOrigins = new Set([
+    "https://red-music.onrender.com",
+    "https://localhost",
+    "http://localhost",
+    "capacitor://localhost",
+    "ionic://localhost"
+  ]);
+  if (origin && allowedOrigins.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+    res.setHeader("Access-Control-Allow-Credentials", "true");
+  }
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+app.use(express.static(path.join(__dirname, "public")));
+// Музыка хранится в STORAGE_DIR/uploads. Раздаём её и через /uploads,
+ // чтобы одинаково работало в браузере и Android WebView.
+app.use("/uploads", express.static(path.join(STORAGE_DIR, "uploads"), {
+  acceptRanges: true,
+  fallthrough: false,
+  maxAge: "1h",
+  setHeaders: (res) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  },
+}));
+
+// Каталог музыки. Файлы могут находиться в public/music, music, tracks,
+// audio, assets/music и других папках репозитория. Это важно, когда большие
+// MP3 не попадают в подготовленный ZIP, но присутствуют в GitHub.
+const AUDIO_EXT = /\.(mp3|wav|ogg|m4a|flac|aac|opus)$/i;
+const AUDIO_ROOTS = [
+  path.join(__dirname, "public", "music"),
+  path.join(__dirname, "music"),
+  path.join(__dirname, "tracks"),
+  path.join(__dirname, "audio"),
+  path.join(__dirname, "assets", "music"),
+  path.join(__dirname, "assets", "audio"),
+  path.join(__dirname, "public", "audio"),
+  path.join(__dirname, "public", "tracks"),
+  path.join(STORAGE_DIR, "music"),
+  path.join(STORAGE_DIR, "uploads")
+];
+
+function safeAudioName(value) {
+  const name = path.basename(String(value || ""));
+  return name && AUDIO_EXT.test(name) ? name : null;
+}
+
+function findAudioFile(filename) {
+  const wanted = safeAudioName(filename);
+  if (!wanted) return null;
+
+  const direct = AUDIO_ROOTS.map(dir => path.join(dir, wanted));
+  for (const file of direct) {
+    try {
+      if (fs.statSync(file).isFile()) return file;
+    } catch (_) {}
+  }
+
+  const visited = new Set();
+  function scan(dir, depth) {
+    if (depth > 5 || visited.has(dir)) return null;
+    visited.add(dir);
+
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch (_) {
+      return null;
+    }
+
+    for (const entry of entries) {
+      if (["node_modules", ".git", "android"].includes(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name.toLowerCase() === wanted.toLowerCase()) return full;
+      if (entry.isDirectory()) {
+        const found = scan(full, depth + 1);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  for (const root of AUDIO_ROOTS) {
+    const found = scan(root, 0);
+    if (found) return found;
+  }
+  return null;
+}
+
+function audioMime(file) {
+  const ext = path.extname(file).toLowerCase();
+  return ({
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".flac": "audio/flac",
+    ".aac": "audio/aac",
+    ".opus": "audio/opus"
+  })[ext] || "application/octet-stream";
+}
+
+app.all("/music/:filename", (req, res) => {
+  const filename = safeAudioName(req.params.filename);
+  if (!filename) return res.status(400).json({ error: "Некорректное имя аудиофайла" });
+
+  const filePath = findAudioFile(filename);
+  if (!filePath) {
+    return res.status(404).json({
+      error: "Аудиофайл не найден на сервере",
+      filename,
+      hint: "Проверьте, что большой MP3 действительно попал в Render deployment."
+    });
+  }
+
+  const stat = fs.statSync(filePath);
+  const total = stat.size;
+
+  res.setHeader("Accept-Ranges", "bytes");
+  res.setHeader("Content-Type", audioMime(filePath));
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+
+  if (req.method === "HEAD") {
+    res.setHeader("Content-Length", total);
+    return res.end();
+  }
+
+  const range = req.headers.range;
+  if (!range) {
+    res.setHeader("Content-Length", total);
+    return fs.createReadStream(filePath).pipe(res);
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(range);
+  if (!match) return res.status(416).setHeader("Content-Range", `bytes */${total}`).end();
+
+  let start = match[1] ? Number(match[1]) : 0;
+  let end = match[2] ? Number(match[2]) : total - 1;
+
+  if (!match[1] && match[2]) {
+    const suffix = Number(match[2]);
+    start = Math.max(total - suffix, 0);
+    end = total - 1;
+  }
+
+  end = Math.min(end, total - 1);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= total || end < start) {
+    return res.status(416).setHeader("Content-Range", `bytes */${total}`).end();
+  }
+
+  res.status(206);
+  res.setHeader("Content-Range", `bytes ${start}-${end}/${total}`);
+  res.setHeader("Content-Length", end - start + 1);
+  fs.createReadStream(filePath, { start, end }).pipe(res);
+});
+
+// --- REST API (реальный backend: SQLite, авторизация, роли, музыка, история, логи) ---
+app.use("/api/auth", createAuthRouter(db));
+app.use("/api/roles", createRolesRouter(db));
+app.use("/api/music", createMusicRouter(db));
+app.use("/api/history", createHistoryRouter(db));
+app.use("/api/popular", createPopularRouter(db));
+app.use("/api/admin/logs", createLogsRouter(db));
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, app: "Red Music", version: "4.3.0-all-devices" });
+});
+
+app.get("/api/music/public-health", (_req, res) => {
+  const files = [];
+  const seen = new Set();
+
+  function scan(dir, depth = 0) {
+    if (depth > 5) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch (_) { return; }
+
+    for (const entry of entries) {
+      if (["node_modules", ".git", "android"].includes(entry.name)) continue;
+      const full = path.join(dir, entry.name);
+
+      if (entry.isFile() && AUDIO_EXT.test(entry.name)) {
+        const key = entry.name.toLowerCase();
+        if (!seen.has(key)) {
+          seen.add(key);
+          files.push(entry.name);
+        }
+      } else if (entry.isDirectory()) {
+        scan(full, depth + 1);
+      }
+    }
+  }
+
+  AUDIO_ROOTS.forEach(dir => scan(dir));
+  files.sort();
+
+  res.json({
+    ok: true,
+    trackFiles: files.length,
+    files,
+    message: files.length
+      ? "Аудиофайлы найдены на сервере."
+      : "Аудиофайлы не найдены в Render deployment."
+  });
+});
+
+app.get("/api/music/check/:filename", (req, res) => {
+  const filename = safeAudioName(req.params.filename);
+  if (!filename) return res.status(400).json({ ok: false, error: "Некорректное имя" });
+
+  const filePath = findAudioFile(filename);
+  if (!filePath) return res.status(404).json({ ok: false, filename, exists: false });
+
+  const stat = fs.statSync(filePath);
+  res.json({
+    ok: true,
+    filename,
+    exists: true,
+    size: stat.size,
+    mime: audioMime(filePath)
+  });
+});
+
+// Фронтенд (index.html) — как и раньше, отдаётся на все остальные маршруты
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+try {
+  ensureSchema();
+} catch (e) {
+  console.error("[db] Не удалось применить схему БД:", e.message);
+}
+
+app.listen(PORT, () => {
+  console.log(`Red Music запущен: http://localhost:${PORT}`);
+});
