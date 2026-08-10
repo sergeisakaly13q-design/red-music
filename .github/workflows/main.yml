@@ -11,82 +11,142 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Скачать проект
       - name: Скачать проект
         uses: actions/checkout@v4
 
+      # 2. Java 21
+      # ВАЖНО: без cache: gradle, потому что Gradle-проект
+      # появляется только после создания Capacitor Android
       - name: Установить Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
-          cache: gradle
 
+      # 3. Node.js
       - name: Установить Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: npm
+          node-version: "22"
 
-      - name: Установить зависимости проекта
+      # 4. Проверка проекта
+      - name: Проверить файлы проекта
+        run: |
+          echo "=== PROJECT FILES ==="
+          ls -la
+          echo "=== PACKAGE ==="
+
+          if [ -f package.json ]; then
+            cat package.json
+          else
+            echo "package.json отсутствует, создаём..."
+            npm init -y
+          fi
+
+      # 5. Установить зависимости проекта
+      - name: Установить зависимости
         run: npm install
 
+      # 6. Установить Capacitor
       - name: Установить Capacitor
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
-
-      - name: Зафиксировать адрес Red Music API
         run: |
-          node <<'NODE'
-          const fs = require("fs");
-          const cfg = {
-            appId: "com.redmusic.app",
-            appName: "Red Music",
-            webDir: "public",
-            server: {
-              url: "https://red-music.onrender.com",
-              cleartext: false,
-              androidScheme: "https",
-              allowNavigation: ["red-music.onrender.com"]
-            }
-          };
-          fs.writeFileSync("capacitor.config.json", JSON.stringify(cfg, null, 2) + "\n");
-          NODE
+          npm install @capacitor/core@latest
+          npm install @capacitor/cli@latest
+          npm install @capacitor/android@latest
 
-      - name: Добавить Android платформу
+      # 7. Подготовить web-папку
+      - name: Подготовить web-файлы
+        run: |
+          mkdir -p public
+
+          if [ -f index.html ]; then
+            cp index.html public/index.html
+          fi
+
+          if [ -d css ]; then
+            cp -r css public/
+          fi
+
+          if [ -d js ]; then
+            cp -r js public/
+          fi
+
+          if [ -d assets ]; then
+            cp -r assets public/
+          fi
+
+          if [ -d music ]; then
+            cp -r music public/
+          fi
+
+          if [ -d songs ]; then
+            cp -r songs public/
+          fi
+
+          if [ -d audio ]; then
+            cp -r audio public/
+          fi
+
+          echo "=== PUBLIC ==="
+          find public -maxdepth 3 -type f | head -100
+
+      # 8. Создать Capacitor config
+      - name: Создать конфигурацию Capacitor
+        env:
+          RED_MUSIC_SERVER_URL: ${{ vars.RED_MUSIC_SERVER_URL }}
+        run: |
+          SERVER_URL="${RED_MUSIC_SERVER_URL:-https://red-music.onrender.com}"
+
+          cat > capacitor.config.json <<EOF
+          {
+            "appId": "com.redmusic.app",
+            "appName": "Red Music",
+            "webDir": "public",
+            "server": {
+              "url": "${SERVER_URL}",
+              "cleartext": false
+            },
+            "android": {
+              "backgroundColor": "#000000"
+            }
+          }
+          EOF
+
+          cat capacitor.config.json
+
+      # 9. Создать Android-проект
+      - name: Создать Android платформу
         run: |
           if [ ! -d android ]; then
             npx cap add android
+          else
+            echo "Android уже существует"
           fi
 
-      - name: Установить генератор иконки
-        run: npm install @capacitor/assets --no-save
-
-      - name: Сгенерировать иконку Red Music
-        run: npx capacitor-assets generate --android
-
-      - name: Синхронизировать Capacitor
-        run: npx cap sync android
-
-      - name: Устранить конфликт Kotlin stdlib
+      # 10. Синхронизация Capacitor
+      - name: Синхронизировать Android
         run: |
-          python3 -c 'from pathlib import Path; p=Path("android/app/build.gradle"); t=p.read_text(); b=chr(10)+chr(10)+"// Red Music: unify Kotlin stdlib versions and prevent duplicate classes."+chr(10)+"configurations.configureEach {"+chr(10)+"    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk7\""+chr(10)+"    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk8\""+chr(10)+"    resolutionStrategy.eachDependency { details ->"+chr(10)+"        if (details.requested.group == \"org.jetbrains.kotlin\") {"+chr(10)+"            details.useVersion \"1.8.22\""+chr(10)+"        }"+chr(10)+"    }"+chr(10)+"}"+chr(10); p.write_text(t+b) if "Red Music: unify Kotlin stdlib versions" not in t else None'
+          npx cap sync android
 
-      - name: Проверить API Red Music
+      # 11. Проверить Gradle
+      - name: Проверить Gradle
         run: |
-          curl --fail --silent --show-error https://red-music.onrender.com/health
-          echo
+          echo "=== ANDROID ==="
+          ls -la android
 
+          echo "=== GRADLE ==="
+          ls -la android/gradlew
+          ls -la android/gradle/wrapper
+
+      # 12. Собрать APK
       - name: Собрать APK
+        working-directory: android
         run: |
-          chmod +x android/gradlew
-          cd android
-          ./gradlew clean --no-daemon
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          chmod +x gradlew
+          ./gradlew assembleDebug --stacktrace
 
-      - name: Проверить APK
-        run: |
-          test -f android/app/build/outputs/apk/debug/app-debug.apk
-          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
-
+      # 13. Загрузить APK
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
