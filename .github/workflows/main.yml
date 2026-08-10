@@ -1,10 +1,10 @@
 name: Build Red Music APK
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   build-apk:
@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Установить Java 21
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '21'
@@ -24,9 +24,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: npm
 
       - name: Установить зависимости
         run: npm install
+
+      - name: Установить Capacitor
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
+
+      - name: Создать Android проект
+        run: |
+          if [ ! -f capacitor.config.json ]; then
+            npx cap init "Red Music" "com.redmusic.app" --web-dir=public
+          fi
+
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Синхронизировать приложение
+        run: npx cap sync android
 
       - name: Собрать APK
         run: |
