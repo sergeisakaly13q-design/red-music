@@ -12,26 +12,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Скачать проект
+      # Скачать проект
       - name: Скачать проект
         uses: actions/checkout@v4
 
-      # 2. Java
+      # Java 21
       - name: Установить Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
-      # 3. Node.js
+      # Node.js
       - name: Установить Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
 
-      # 4. Установить зависимости проекта
+      # Установить зависимости проекта
       - name: Установить зависимости
         run: |
           if [ -f package-lock.json ]; then
@@ -40,13 +39,13 @@ jobs:
             npm install
           fi
 
-      # 5. Установить Capacitor
+      # Установить Capacitor
       - name: Установить Capacitor
         run: |
           npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
-          npm install @capacitor/assets@3 --save-dev
+          npm install @capacitor/assets --save-dev
 
-      # 6. Создать конфигурацию Capacitor
+      # Создать Capacitor config
       - name: Создать конфигурацию Capacitor
         env:
           RED_MUSIC_SERVER_URL: ${{ vars.RED_MUSIC_SERVER_URL }}
@@ -76,63 +75,50 @@ jobs:
           );
 
           console.log('Capacitor config создан');
-          console.log('Server URL:', serverUrl);
+          console.log('Server:', serverUrl);
           NODE
 
-      # 7. Удалить старую Android-платформу
-      # Это важно, если в репозитории осталась неполная/битая папка android.
-      - name: Очистить старую Android платформу
-        run: |
-          rm -rf android
-
-      # 8. Создать Android заново
+      # Создать Android заново
       - name: Создать Android платформу
         run: |
+          rm -rf android
           npx cap add android
 
-      # 9. Проверить проект
-      - name: Проверить Capacitor
-        run: |
-          npx cap doctor
-
-      # 10. Иконка приложения
-      - name: Подготовить иконку Red Music
+      # Сгенерировать иконку, если она есть
+      - name: Сгенерировать иконку Red Music
         run: |
           if [ -f resources/icon.png ]; then
-            echo "Найдена resources/icon.png"
-            npx capacitor-assets generate --android
-          elif [ -f resources/icon-only.png ]; then
-            echo "Найдена resources/icon-only.png"
+            echo "Найдена иконка Red Music"
             npx capacitor-assets generate --android
           else
-            echo "Иконка resources/icon.png не найдена."
-            echo "Сборка продолжится со стандартной Android-иконкой."
+            echo "resources/icon.png не найдена, используем стандартную иконку"
           fi
 
-      # 11. Синхронизация
+      # Синхронизация
       - name: Синхронизировать Capacitor
         run: |
           npx cap sync android
 
-      # 12. Сделать Gradle исполняемым
+      # Подготовить Gradle
       - name: Подготовить Gradle
         run: |
           chmod +x android/gradlew
 
-      # 13. Собрать APK
+      # Собрать APK
       - name: Собрать APK
         working-directory: android
         run: |
           ./gradlew clean
           ./gradlew assembleDebug --stacktrace
 
-      # 14. Проверить APK
+      # Проверить APK
       - name: Проверить APK
         run: |
+          echo "Проверяем APK..."
           ls -lah android/app/build/outputs/apk/debug/
           test -f android/app/build/outputs/apk/debug/app-debug.apk
 
-      # 15. Загрузить APK
+      # Загрузить готовый APK
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
