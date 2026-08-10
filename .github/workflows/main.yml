@@ -19,15 +19,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
-          cache: gradle
 
       - name: Установить Node.js
         uses: actions/setup-node@v5
         with:
           node-version: '22'
-          cache: npm
 
-      - name: Проверить Node и Java
+      - name: Проверить окружение
         run: |
           node --version
           npm --version
