@@ -1,0 +1,95 @@
+name: Build Red Music APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Скачать проект
+        uses: actions/checkout@v4
+
+      - name: Установить Java 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Установить Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Установить зависимости проекта
+        run: npm install
+
+      - name: Установить Capacitor
+        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+
+      - name: Зафиксировать адрес Red Music API
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+          const cfg = {
+            appId: "com.redmusic.app",
+            appName: "Red Music",
+            webDir: "public",
+            server: {
+              url: "https://red-music.onrender.com",
+              cleartext: false,
+              androidScheme: "https",
+              allowNavigation: ["red-music.onrender.com"]
+            }
+          };
+          fs.writeFileSync("capacitor.config.json", JSON.stringify(cfg, null, 2) + "\n");
+          NODE
+
+      - name: Добавить Android платформу
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Установить генератор иконки
+        run: npm install @capacitor/assets --no-save
+
+      - name: Сгенерировать иконку Red Music
+        run: npx capacitor-assets generate --android
+
+      - name: Синхронизировать Capacitor
+        run: npx cap sync android
+
+      - name: Устранить конфликт Kotlin stdlib
+        run: |
+          python3 -c 'from pathlib import Path; p=Path("android/app/build.gradle"); t=p.read_text(); b=chr(10)+chr(10)+"// Red Music: unify Kotlin stdlib versions and prevent duplicate classes."+chr(10)+"configurations.configureEach {"+chr(10)+"    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk7\""+chr(10)+"    exclude group: \"org.jetbrains.kotlin\", module: \"kotlin-stdlib-jdk8\""+chr(10)+"    resolutionStrategy.eachDependency { details ->"+chr(10)+"        if (details.requested.group == \"org.jetbrains.kotlin\") {"+chr(10)+"            details.useVersion \"1.8.22\""+chr(10)+"        }"+chr(10)+"    }"+chr(10)+"}"+chr(10); p.write_text(t+b) if "Red Music: unify Kotlin stdlib versions" not in t else None'
+
+      - name: Проверить API Red Music
+        run: |
+          curl --fail --silent --show-error https://red-music.onrender.com/health
+          echo
+
+      - name: Собрать APK
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew clean --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Проверить APK
+        run: |
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Загрузить APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Red-Music-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
