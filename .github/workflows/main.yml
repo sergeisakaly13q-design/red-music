@@ -29,14 +29,33 @@ jobs:
         run: npm install
 
       - name: Установить Capacitor
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+        run: |
+          npm install @capacitor/core @capacitor/cli @capacitor/android
 
       - name: Создать конфигурацию Capacitor
         env:
           RED_MUSIC_SERVER_URL: ${{ vars.RED_MUSIC_SERVER_URL }}
         run: |
           SERVER_URL="${RED_MUSIC_SERVER_URL:-https://red-music.onrender.com}"
-          node -e "const fs=require('fs'); const cfg={appId:'com.redmusic.app',appName:'Red Music',webDir:'public',server:{url:process.env.SERVER_URL,cleartext:false}}; fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg,null,2)+'\\n')" 
+
+          node -e "
+          const fs = require('fs');
+
+          const cfg = {
+            appId: 'com.redmusic.app',
+            appName: 'Red Music',
+            webDir: 'public',
+            server: {
+              url: process.env.SERVER_URL,
+              cleartext: false
+            }
+          };
+
+          fs.writeFileSync(
+            'capacitor.config.json',
+            JSON.stringify(cfg, null, 2) + '\n'
+          );
+          "
 
       - name: Добавить Android платформу
         run: |
@@ -53,14 +72,74 @@ jobs:
       - name: Синхронизировать приложение
         run: npx cap sync android
 
+      - name: Исправить конфликт Kotlin
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle_file = Path("android/app/build.gradle")
+
+          if not gradle_file.exists():
+              raise SystemExit("android/app/build.gradle не найден")
+
+          text = gradle_file.read_text()
+
+          kotlin_fix = r'''
+
+          // Red Music: fix Kotlin stdlib duplicate classes
+          configurations.all {
+              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
+              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
+
+              resolutionStrategy.eachDependency { details ->
+                  if (details.requested.group == "org.jetbrains.kotlin") {
+                      details.useVersion "1.8.22"
+                  }
+              }
+          }
+          '''
+
+          if "Red Music: fix Kotlin stdlib duplicate classes" not in text:
+              text += kotlin_fix
+
+          gradle_file.write_text(text)
+
+          print("Kotlin conflict fix applied successfully.")
+          PY
+
+      - name: Проверить Android проект
+        run: |
+          test -f android/gradlew
+          test -f android/app/build.gradle
+          echo "Android project is ready."
+
       - name: Собрать APK
         run: |
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleDebug
+
+          ./gradlew clean --no-daemon
+
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all
+
+      - name: Проверить APK
+        run: |
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "APK не найден!"
+            exit 1
+          fi
+
+          ls -lh "$APK"
+          echo "APK успешно создан."
 
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
           name: Red-Music-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
