@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 jobs:
@@ -12,113 +11,100 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Скачать проект
       - name: Скачать проект
         uses: actions/checkout@v4
 
-      # Java 21
       - name: Установить Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
 
-      # Node.js
       - name: Установить Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: npm
 
-      # Установить зависимости проекта
-      - name: Установить зависимости
+      - name: Проверить проект
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
+          echo "Содержимое проекта:"
+          ls -la
+
+      - name: Создать package-lock если его нет
+        run: |
+          if [ ! -f package.json ]; then
+            echo "ОШИБКА: package.json не найден!"
+            exit 1
           fi
 
-      # Установить Capacitor
+          if [ ! -f package-lock.json ]; then
+            echo "package-lock.json отсутствует. Создаём..."
+            npm install --package-lock-only
+          fi
+
+      - name: Установить зависимости проекта
+        run: npm install
+
       - name: Установить Capacitor
         run: |
-          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
-          npm install @capacitor/assets --save-dev
+          npm install @capacitor/core @capacitor/cli @capacitor/android
 
-      # Создать Capacitor config
       - name: Создать конфигурацию Capacitor
         env:
           RED_MUSIC_SERVER_URL: ${{ vars.RED_MUSIC_SERVER_URL }}
         run: |
           SERVER_URL="${RED_MUSIC_SERVER_URL:-https://red-music.onrender.com}"
 
-          node <<'NODE'
-          const fs = require('fs');
-
-          const serverUrl =
-            process.env.RED_MUSIC_SERVER_URL ||
-            'https://red-music.onrender.com';
-
-          const config = {
-            appId: 'com.redmusic.app',
-            appName: 'Red Music',
-            webDir: 'public',
-            server: {
-              url: serverUrl,
-              cleartext: false
+          cat > capacitor.config.json <<EOF
+          {
+            "appId": "com.redmusic.app",
+            "appName": "Red Music",
+            "webDir": "public",
+            "server": {
+              "url": "${SERVER_URL}",
+              "cleartext": false
             }
-          };
+          }
+          EOF
 
-          fs.writeFileSync(
-            'capacitor.config.json',
-            JSON.stringify(config, null, 2) + '\n'
-          );
+          cat capacitor.config.json
 
-          console.log('Capacitor config создан');
-          console.log('Server:', serverUrl);
-          NODE
-
-      # Создать Android заново
-      - name: Создать Android платформу
+      - name: Подготовить Android
         run: |
-          rm -rf android
-          npx cap add android
-
-      # Сгенерировать иконку, если она есть
-      - name: Сгенерировать иконку Red Music
-        run: |
-          if [ -f resources/icon.png ]; then
-            echo "Найдена иконка Red Music"
-            npx capacitor-assets generate --android
-          else
-            echo "resources/icon.png не найдена, используем стандартную иконку"
+          if [ ! -d android ]; then
+            npx cap add android
           fi
 
-      # Синхронизация
-      - name: Синхронизировать Capacitor
-        run: |
-          npx cap sync android
+      - name: Установить генератор иконки
+        run: npm install @capacitor/assets --no-save
 
-      # Подготовить Gradle
-      - name: Подготовить Gradle
+      - name: Проверить иконку
+        run: |
+          if [ -f assets/icon.png ]; then
+            echo "Найдена assets/icon.png"
+          elif [ -f assets/icon-only.png ]; then
+            echo "Найдена assets/icon-only.png"
+          else
+            echo "Иконка не найдена. Используется стандартная иконка."
+          fi
+
+      - name: Сгенерировать иконку Red Music
+        run: |
+          if [ -f assets/icon.png ] || [ -f assets/icon-only.png ]; then
+            npx capacitor-assets generate --android
+          else
+            echo "Пропускаем генерацию иконки"
+          fi
+
+      - name: Синхронизировать Capacitor
+        run: npx cap sync android
+
+      - name: Собрать APK
         run: |
           chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon
 
-      # Собрать APK
-      - name: Собрать APK
-        working-directory: android
-        run: |
-          ./gradlew clean
-          ./gradlew assembleDebug --stacktrace
-
-      # Проверить APK
-      - name: Проверить APK
-        run: |
-          echo "Проверяем APK..."
-          ls -lah android/app/build/outputs/apk/debug/
-          test -f android/app/build/outputs/apk/debug/app-debug.apk
-
-      # Загрузить готовый APK
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
