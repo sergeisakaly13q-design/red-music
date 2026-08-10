@@ -23,9 +23,16 @@ jobs:
       - name: Установить Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
-      - name: Установить зависимости
+      - name: Проверить проект
+        run: |
+          echo "Проверка файлов проекта..."
+          ls -la
+          test -f package.json
+          echo "package.json найден"
+
+      - name: Установить npm зависимости
         run: npm install
 
       - name: Установить Capacitor
@@ -50,41 +57,75 @@ jobs:
           }
           EOF
 
-          echo "Используется сервер: ${SERVER_URL}"
-
-      - name: Проверить Capacitor config
-        run: |
-          cat capacitor.config.json
+          echo "Server URL: ${SERVER_URL}"
 
       - name: Создать Android платформу
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
           else
-            echo "Android платформа уже существует"
+            echo "Android уже существует"
           fi
 
       - name: Синхронизировать Capacitor
         run: |
           npx cap sync android
 
+      - name: Исправить конфликт Kotlin
+        run: |
+          mkdir -p .github/gradle
+
+          cat > .github/gradle/kotlin-fix.gradle <<'EOF'
+          allprojects {
+              configurations.configureEach {
+                  resolutionStrategy.eachDependency { details ->
+                      if (details.requested.group == "org.jetbrains.kotlin") {
+                          if (
+                              details.requested.name == "kotlin-stdlib" ||
+                              details.requested.name == "kotlin-stdlib-jdk7" ||
+                              details.requested.name == "kotlin-stdlib-jdk8"
+                          ) {
+                              details.useVersion("1.8.22")
+                              details.because("Fix Kotlin stdlib duplicate classes")
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
       - name: Проверить Android проект
         run: |
           test -f android/gradlew
-          test -f android/settings.gradle || test -f android/settings.gradle.kts
           test -d android/app
           echo "Android проект найден"
+
+      - name: Подготовить Gradle
+        run: |
+          chmod +x android/gradlew
+
+      - name: Очистить старые Gradle файлы
+        working-directory: android
+        run: |
+          ./gradlew clean --no-daemon --stacktrace
 
       - name: Собрать APK
         working-directory: android
         run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --info \
+            --init-script ../.github/gradle/kotlin-fix.gradle
 
       - name: Проверить APK
         run: |
+          echo "Проверяем результат сборки..."
           ls -lah android/app/build/outputs/apk/debug/
+
           test -f android/app/build/outputs/apk/debug/app-debug.apk
+
+          echo "APK успешно создан!"
 
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
