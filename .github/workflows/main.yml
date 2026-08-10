@@ -1,6 +1,6 @@
 name: Build Red Music APK
 
-on:
+on:1
   push:
     branches:
       - main
