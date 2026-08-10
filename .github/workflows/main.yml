@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+
   workflow_dispatch:
 
 jobs:
@@ -11,56 +12,130 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. Скачать проект
       - name: Скачать проект
         uses: actions/checkout@v4
 
+      # 2. Java
       - name: Установить Java 21
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
+          cache: gradle
 
+      # 3. Node.js
       - name: Установить Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
+          cache: npm
 
+      # 4. Установить зависимости проекта
       - name: Установить зависимости
-        run: npm install
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
 
+      # 5. Установить Capacitor
       - name: Установить Capacitor
-        run: npm install @capacitor/core @capacitor/cli @capacitor/android
+        run: |
+          npm install @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7
+          npm install @capacitor/assets@3 --save-dev
 
+      # 6. Создать конфигурацию Capacitor
       - name: Создать конфигурацию Capacitor
         env:
           RED_MUSIC_SERVER_URL: ${{ vars.RED_MUSIC_SERVER_URL }}
         run: |
           SERVER_URL="${RED_MUSIC_SERVER_URL:-https://red-music.onrender.com}"
-          node -e "const fs=require('fs'); const cfg={appId:'com.redmusic.app',appName:'Red Music',webDir:'public',server:{url:process.env.SERVER_URL,cleartext:false}}; fs.writeFileSync('capacitor.config.json', JSON.stringify(cfg,null,2)+'\\n')" 
 
-      - name: Добавить Android платформу
+          node <<'NODE'
+          const fs = require('fs');
+
+          const serverUrl =
+            process.env.RED_MUSIC_SERVER_URL ||
+            'https://red-music.onrender.com';
+
+          const config = {
+            appId: 'com.redmusic.app',
+            appName: 'Red Music',
+            webDir: 'public',
+            server: {
+              url: serverUrl,
+              cleartext: false
+            }
+          };
+
+          fs.writeFileSync(
+            'capacitor.config.json',
+            JSON.stringify(config, null, 2) + '\n'
+          );
+
+          console.log('Capacitor config создан');
+          console.log('Server URL:', serverUrl);
+          NODE
+
+      # 7. Удалить старую Android-платформу
+      # Это важно, если в репозитории осталась неполная/битая папка android.
+      - name: Очистить старую Android платформу
         run: |
-          if [ ! -d android ]; then
-            npx cap add android
+          rm -rf android
+
+      # 8. Создать Android заново
+      - name: Создать Android платформу
+        run: |
+          npx cap add android
+
+      # 9. Проверить проект
+      - name: Проверить Capacitor
+        run: |
+          npx cap doctor
+
+      # 10. Иконка приложения
+      - name: Подготовить иконку Red Music
+        run: |
+          if [ -f resources/icon.png ]; then
+            echo "Найдена resources/icon.png"
+            npx capacitor-assets generate --android
+          elif [ -f resources/icon-only.png ]; then
+            echo "Найдена resources/icon-only.png"
+            npx capacitor-assets generate --android
+          else
+            echo "Иконка resources/icon.png не найдена."
+            echo "Сборка продолжится со стандартной Android-иконкой."
           fi
 
-      - name: Установить генератор иконки
-        run: npm install @capacitor/assets --no-save
+      # 11. Синхронизация
+      - name: Синхронизировать Capacitor
+        run: |
+          npx cap sync android
 
-      - name: Сгенерировать иконку Red Music
-        run: npx capacitor-assets generate --android
-
-      - name: Синхронизировать приложение
-        run: npx cap sync android
-
-      - name: Собрать APK
+      # 12. Сделать Gradle исполняемым
+      - name: Подготовить Gradle
         run: |
           chmod +x android/gradlew
-          cd android
-          ./gradlew assembleDebug
 
+      # 13. Собрать APK
+      - name: Собрать APK
+        working-directory: android
+        run: |
+          ./gradlew clean
+          ./gradlew assembleDebug --stacktrace
+
+      # 14. Проверить APK
+      - name: Проверить APK
+        run: |
+          ls -lah android/app/build/outputs/apk/debug/
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+
+      # 15. Загрузить APK
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
           name: Red-Music-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
