@@ -15,7 +15,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Установить Java 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -23,20 +23,19 @@ jobs:
       - name: Установить Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
 
       - name: Установить зависимости
         run: npm install
 
       - name: Собрать APK
         run: |
-          npx cap sync android
+          chmod +x android/gradlew
           cd android
-          chmod +x gradlew
           ./gradlew assembleDebug
 
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
-          name: red-music-apk
+          name: Red-Music-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
