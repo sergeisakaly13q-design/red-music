@@ -112,13 +112,22 @@ jobs:
 
       - name: Добавить Android платформу если её нет
         run: |
-          if [ ! -d android ]; then
-            echo "Android проекта нет."
-            echo "Создаём Android платформу..."
+          # Проверяем не саму папку android, а наличие в ней gradlew.
+          # Если папка android есть, но неполная (например, закоммичена
+          # без gradle wrapper), пересоздаём её полностью через Capacitor.
+          if [ ! -f android/gradlew ]; then
+            if [ -d android ]; then
+              echo "Папка android существует, но она неполная (нет gradlew)."
+              echo "Удаляем и пересоздаём Android платформу..."
+              rm -rf android
+            else
+              echo "Android проекта нет."
+              echo "Создаём Android платформу..."
+            fi
 
             npx cap add android
           else
-            echo "Android проект уже существует."
+            echo "Android проект уже существует и содержит gradlew."
             echo "Используем существующий Android проект."
           fi
 
