@@ -28,64 +28,95 @@ jobs:
         with:
           node-version: "20"
 
-      - name: Проверить большие аудиофайлы
+      - name: Проверить аудиофайлы
+        shell: bash
         run: |
-          echo "Аудиофайлы, попавшие в checkout:"
-          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) -not -path "./node_modules/*" -not -path "./.git/*" | head -100 || true
+          echo "Аудиофайлы:"
+          find . -type f \( \
+            -iname "*.mp3" \
+            -o -iname "*.wav" \
+            -o -iname "*.ogg" \
+            -o -iname "*.m4a" \
+            -o -iname "*.flac" \
+          \) \
+          -not -path "./node_modules/*" \
+          -not -path "./.git/*" \
+          | head -100 || true
 
       - name: Установить зависимости
         run: npm install --no-audit --no-fund
 
       - name: Создать конфигурацию Capacitor
+        shell: bash
         run: |
-          node -e "require('fs').writeFileSync('capacitor.config.json', JSON.stringify({appId:'com.redmusic.app',appName:'Red Music',webDir:'public',server:{url:'https://red-music.onrender.com',cleartext:false,androidScheme:'https',allowNavigation:['red-music.onrender.com','*.onrender.com']}},null,2)+'\n')"
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.redmusic.app",
+            "appName": "Red Music",
+            "webDir": "public",
+            "server": {
+              "url": "https://red-music.onrender.com",
+              "cleartext": false,
+              "androidScheme": "https",
+              "allowNavigation": [
+                "red-music.onrender.com",
+                "*.onrender.com"
+              ]
+            }
+          }
+          EOF
 
       - name: Добавить Android платформу
+        shell: bash
         run: |
-          if [ ! -d android ]; then
+          if [ ! -d "android" ]; then
             npx cap add android
+          else
+            echo "Android уже существует"
           fi
 
       - name: Установить генератор иконок
         run: npm install @capacitor/assets --no-save
 
-      - name: Сгенерировать иконку Red Music для Android
+      - name: Сгенерировать иконку Red Music
         run: npx capacitor-assets generate --android
 
       - name: Синхронизировать Capacitor
         run: npx cap sync android
 
-      - name: Исправить Kotlin stdlib конфликт
+      - name: Исправить Kotlin stdlib
+        shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("android/app/build.gradle")
-          text = p.read_text()
-          marker = "// RED_MUSIC_KOTLIN_FIX"
-          fix = """
-// RED_MUSIC_KOTLIN_FIX
-configurations.configureEach {
-    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
-    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
-    resolutionStrategy.eachDependency { details ->
-        if (details.requested.group == "org.jetbrains.kotlin") {
-            details.useVersion "1.8.22"
-        }
-    }
-}
-"""
-          if marker not in text:
-              p.write_text(text.rstrip() + "\n" + fix)
-          PY
+          cat >> android/app/build.gradle <<'EOF'
+
+          // RED_MUSIC_KOTLIN_FIX
+          configurations.configureEach {
+              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
+              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
+
+              resolutionStrategy.eachDependency { details ->
+                  if (details.requested.group == "org.jetbrains.kotlin") {
+                      details.useVersion "1.8.22"
+                  }
+              }
+          }
+          EOF
 
       - name: Проверить Render
+        shell: bash
         run: |
-          curl --fail --silent --show-error https://red-music.onrender.com/health
-          echo
-          curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
-          echo
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/health
+
+          echo ""
+
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/api/music/public-health
+
+          echo ""
 
       - name: Собрать APK
+        shell: bash
         run: |
           chmod +x android/gradlew
           cd android
@@ -93,6 +124,7 @@ configurations.configureEach {
           ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Проверить APK
+        shell: bash
         run: |
           test -f android/app/build/outputs/apk/debug/app-debug.apk
           ls -lh android/app/build/outputs/apk/debug/app-debug.apk
