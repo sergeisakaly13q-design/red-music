@@ -18,97 +18,139 @@ jobs:
           fetch-depth: 1
 
       - name: Установить Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Установить Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
+          cache: npm
 
-      - name: Проверить большие аудиофайлы
+      - name: Проверить проект
         run: |
-          echo "Аудиофайлы, попавшие в checkout:"
-          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) \
-            -not -path "./node_modules/*" \
-            -not -path "./.git/*" | head -100 || true
+          echo "Node:"
+          node --version
 
-      - name: Установить зависимости
-        run: npm install --no-audit --no-fund
+          echo "NPM:"
+          npm --version
 
-      - name: Создать конфигурацию Capacitor
-        run: |
-          node -e "require('fs').writeFileSync('capacitor.config.json', JSON.stringify({appId:'com.redmusic.app',appName:'Red Music',webDir:'public',server:{url:'https://red-music.onrender.com',cleartext:false,androidScheme:'https',allowNavigation:['red-music.onrender.com','*.onrender.com']}},null,2)+'\n')"
+          echo "Структура проекта:"
+          ls -la
 
-      - name: Добавить Android платформу
-        run: |
-          if [ ! -d android ]; then
-            npx cap add android
+          echo "Android:"
+          if [ -d android ]; then
+            echo "Папка android найдена"
+          else
+            echo "Папка android отсутствует"
           fi
 
-      - name: Установить генератор иконок
-        run: npm install @capacitor/assets --no-save
+      - name: Проверить аудиофайлы
+        run: |
+          echo "Аудиофайлы:"
+          find . \
+            -type f \
+            \( \
+              -iname "*.mp3" -o \
+              -iname "*.wav" -o \
+              -iname "*.ogg" -o \
+              -iname "*.m4a" -o \
+              -iname "*.flac" \
+            \) \
+            -not -path "./node_modules/*" \
+            -not -path "./.git/*" \
+            | head -100 || true
 
-      - name: Сгенерировать иконку Red Music для Android
-        run: npx capacitor-assets generate --android
+      - name: Установить зависимости
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Проверить Capacitor
+        run: |
+          npx cap --version
+          npx cap doctor || true
+
+      - name: Создать capacitor.config.json
+        run: |
+          node <<'NODE'
+          const fs = require("fs");
+
+          const config = {
+            appId: "com.redmusic.app",
+            appName: "Red Music",
+            webDir: "public",
+            server: {
+              url: "https://red-music.onrender.com",
+              cleartext: false,
+              androidScheme: "https",
+              allowNavigation: [
+                "red-music.onrender.com",
+                "*.onrender.com"
+              ]
+            }
+          };
+
+          fs.writeFileSync(
+            "capacitor.config.json",
+            JSON.stringify(config, null, 2) + "\n"
+          );
+
+          console.log("capacitor.config.json создан");
+          NODE
+
+      - name: Проверить Android проект
+        run: |
+          if [ ! -d "android" ]; then
+            echo "Android проекта нет. Создаём Capacitor Android..."
+            npx cap add android
+          else
+            echo "Android проект уже существует. Используем его."
+          fi
 
       - name: Синхронизировать Capacitor
-        run: npx cap sync android
-
-      - name: Исправить Kotlin stdlib конфликт
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          npx cap sync android
 
-          p = Path("android/app/build.gradle")
-
-          if not p.exists():
-              raise SystemExit("android/app/build.gradle не найден")
-
-          text = p.read_text()
-          marker = "// RED_MUSIC_KOTLIN_FIX"
-
-          fix = """
-          // RED_MUSIC_KOTLIN_FIX
-          configurations.configureEach {
-              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
-              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
-
-              resolutionStrategy.eachDependency { details ->
-                  if (details.requested.group == "org.jetbrains.kotlin") {
-                      details.useVersion "1.8.22"
-                  }
-              }
-          }
-          """
-
-          if marker not in text:
-              p.write_text(text.rstrip() + "\n" + fix)
-
-          print("Kotlin fix проверен")
-
-          PY
-
-      - name: Проверить Render
+      - name: Проверить Gradle
         run: |
-          curl --fail --silent --show-error https://red-music.onrender.com/health
-          echo
-          curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
-          echo
+          chmod +x android/gradlew
+          cd android
+          ./gradlew --version
 
       - name: Собрать APK
         run: |
           chmod +x android/gradlew
+
           cd android
-          ./gradlew clean --no-daemon
-          ./gradlew assembleDebug --no-daemon --stacktrace
+
+          ./gradlew clean \
+            --no-daemon \
+            --stacktrace
+
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace \
+            --warning-mode all
 
       - name: Проверить APK
         run: |
-          test -f android/app/build/outputs/apk/debug/app-debug.apk
-          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
+          if [ ! -f "$APK" ]; then
+            echo "ОШИБКА: APK не найден!"
+            echo "Содержимое build:"
+            find android/app/build -type f | head -100 || true
+            exit 1
+          fi
+
+          echo "APK успешно создан:"
+          ls -lh "$APK"
 
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
