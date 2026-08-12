@@ -27,56 +27,31 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: "22"
-          cache: npm
 
-      - name: Проверить проект
+      - name: Проверить Node и NPM
         run: |
-          echo "Node:"
           node --version
-
-          echo "NPM:"
           npm --version
 
-          echo "Структура проекта:"
-          ls -la
-
-          echo "Android:"
-          if [ -d android ]; then
-            echo "Папка android найдена"
-          else
-            echo "Папка android отсутствует"
+      - name: Проверить package.json
+        run: |
+          if [ ! -f package.json ]; then
+            echo "ОШИБКА: package.json не найден"
+            exit 1
           fi
 
-      - name: Проверить аудиофайлы
-        run: |
-          echo "Аудиофайлы:"
-          find . \
-            -type f \
-            \( \
-              -iname "*.mp3" -o \
-              -iname "*.wav" -o \
-              -iname "*.ogg" -o \
-              -iname "*.m4a" -o \
-              -iname "*.flac" \
-            \) \
-            -not -path "./node_modules/*" \
-            -not -path "./.git/*" \
-            | head -100 || true
+          echo "package.json найден"
+          cat package.json
 
       - name: Установить зависимости
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci --no-audit --no-fund
-          else
-            npm install --no-audit --no-fund
-          fi
+          npm install --no-audit --no-fund
 
       - name: Проверить Capacitor
         run: |
           npx cap --version
-          npx cap doctor || true
 
-      - name: Создать capacitor.config.json
+      - name: Создать конфигурацию Capacitor
         run: |
           node <<'NODE'
           const fs = require("fs");
@@ -101,16 +76,16 @@ jobs:
             JSON.stringify(config, null, 2) + "\n"
           );
 
-          console.log("capacitor.config.json создан");
+          console.log("Capacitor config создан");
           NODE
 
-      - name: Проверить Android проект
+      - name: Проверить Android
         run: |
-          if [ ! -d "android" ]; then
-            echo "Android проекта нет. Создаём Capacitor Android..."
-            npx cap add android
+          if [ -d android ]; then
+            echo "Android проект найден"
           else
-            echo "Android проект уже существует. Используем его."
+            echo "Android проекта нет. Создаём..."
+            npx cap add android
           fi
 
       - name: Синхронизировать Capacitor
@@ -143,8 +118,7 @@ jobs:
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ОШИБКА: APK не найден!"
-            echo "Содержимое build:"
+            echo "ОШИБКА: APK не найден"
             find android/app/build -type f | head -100 || true
             exit 1
           fi
