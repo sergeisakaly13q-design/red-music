@@ -26,110 +26,130 @@ jobs:
       - name: Установить Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "20"
 
-      - name: Проверить окружение
+      - name: Проверить большие аудиофайлы
         run: |
-          echo "===== NODE ====="
-          node --version
-
-          echo "===== NPM ====="
-          npm --version
-
-          echo "===== JAVA ====="
-          java -version
-
-          echo "===== PROJECT ====="
-          pwd
-          ls -la
-
-      - name: Проверить package.json
-        run: |
-          if [ ! -f package.json ]; then
-            echo "ОШИБКА: package.json не найден!"
-            exit 1
-          fi
-
-          echo "package.json найден"
-          cat package.json
-
-      - name: Проверить public
-        run: |
-          if [ ! -d public ]; then
-            echo "ОШИБКА: папка public не найдена!"
-            exit 1
-          fi
-
-          echo "Папка public найдена"
-          find public -maxdepth 2 -type f | head -100
-
-      - name: Проверить Android
-        run: |
-          if [ -d android ]; then
-            echo "Android проект найден в репозитории"
-            find android -maxdepth 2 -type f | head -100
-          else
-            echo "Android проекта нет. Он будет создан Capacitor."
-          fi
+          echo "Аудиофайлы, попавшие в checkout:"
+          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) -not -path "./node_modules/*" -not -path "./.git/*" | head -100 || true
 
       - name: Установить зависимости
+        run: npm install --no-audit --no-fund
+
+      - name: Добавить Android платформу
         run: |
-          npm install --no-audit --no-fund
+          # android/ никогда не хранится в git — генерируем с нуля
+          # каждый раз, чтобы всегда получать полный проект с gradlew.
+          rm -rf android
+          npx cap add android
 
-      - name: Проверить Capacitor
+      - name: Наложить кастомный MediaSession-код
         run: |
-          npx cap --version
-          npx cap doctor || true
+          mkdir -p android/app/src/main/java/com/redmusic/app
+          cp android-overlay/java/com/redmusic/app/MainActivity.kt \
+             android/app/src/main/java/com/redmusic/app/MainActivity.kt
+          cp android-overlay/java/com/redmusic/app/RedMusicMediaPlugin.kt \
+             android/app/src/main/java/com/redmusic/app/RedMusicMediaPlugin.kt
+          cp android-overlay/java/com/redmusic/app/RedMusicMediaService.kt \
+             android/app/src/main/java/com/redmusic/app/RedMusicMediaService.kt
 
-      - name: Создать конфигурацию Capacitor
+          mkdir -p android/app/src/main/res/drawable
+          cp android-overlay/res/drawable/ic_music_notification.xml \
+             android/app/src/main/res/drawable/ic_music_notification.xml
+
+          echo "Кастомные файлы скопированы."
+
+      - name: Патч AndroidManifest.xml для MediaSession
         run: |
-          node <<'NODE'
-          const fs = require("fs");
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
 
-          const config = {
-            appId: "com.redmusic.app",
-            appName: "Red Music",
-            webDir: "public",
-            server: {
-              url: "https://red-music.onrender.com",
-              cleartext: false,
-              androidScheme: "https",
-              allowNavigation: [
-                "red-music.onrender.com",
-                "*.onrender.com"
-              ]
-            }
-          };
+          p = Path("android/app/src/main/AndroidManifest.xml")
+          text = p.read_text()
+          marker = "<!-- RED_MUSIC_MEDIA_SESSION -->"
 
-          fs.writeFileSync(
-            "capacitor.config.json",
-            JSON.stringify(config, null, 2) + "\n"
-          );
+          if marker not in text:
+              permissions = (
+                  marker + "\n"
+                  '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n'
+                  '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
+                  '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n'
+                  '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
+              )
+              text = re.sub(r'(<manifest[^>]*>)', r'\1\n' + permissions, text, count=1)
 
-          console.log("capacitor.config.json успешно создан:");
-          console.log(JSON.stringify(config, null, 2));
-          NODE
+              service_block = (
+                  '        <service\n'
+                  '            android:name=".RedMusicMediaService"\n'
+                  '            android:exported="false"\n'
+                  '            android:foregroundServiceType="mediaPlayback">\n'
+                  '            <intent-filter>\n'
+                  '                <action android:name="android.intent.action.MEDIA_BUTTON" />\n'
+                  '            </intent-filter>\n'
+                  '        </service>\n'
+              )
+              text = text.replace("</application>", service_block + "    </application>", 1)
 
-      - name: Добавить Android платформу если её нет
+              p.write_text(text)
+              print("AndroidManifest.xml пропатчен")
+          else:
+              print("AndroidManifest.xml уже пропатчен, пропускаем")
+          PY
+
+      - name: Патч build.gradle для androidx.media
         run: |
-          # Проверяем не саму папку android, а наличие в ней gradlew.
-          # Если папка android есть, но неполная (например, закоммичена
-          # без gradle wrapper), пересоздаём её полностью через Capacitor.
-          if [ ! -f android/gradlew ]; then
-            if [ -d android ]; then
-              echo "Папка android существует, но она неполная (нет gradlew)."
-              echo "Удаляем и пересоздаём Android платформу..."
-              rm -rf android
-            else
-              echo "Android проекта нет."
-              echo "Создаём Android платформу..."
-            fi
+          python3 - <<'PY'
+          from pathlib import Path
 
-            npx cap add android
-          else
-            echo "Android проект уже существует и содержит gradlew."
-            echo "Используем существующий Android проект."
-          fi
+          p = Path("android/app/build.gradle")
+          text = p.read_text()
+          marker = "// RED_MUSIC_MEDIA_DEPENDENCY"
+
+          if marker not in text:
+              addition = (
+                  f"\n{marker}\n"
+                  "dependencies {\n"
+                  '    implementation "androidx.media:media:1.7.0"\n'
+                  "}\n"
+              )
+              p.write_text(text.rstrip() + "\n" + addition)
+              print("build.gradle пропатчен (androidx.media добавлен)")
+          else:
+              print("build.gradle уже пропатчен, пропускаем")
+          PY
+
+      - name: Установить генератор иконок
+        run: npm install @capacitor/assets --no-save
+
+      - name: Сгенерировать иконку Red Music для Android
+        run: npx capacitor-assets generate --android
+
+      - name: Синхронизировать Capacitor
+        run: npx cap sync android
+
+      - name: Исправить Kotlin stdlib конфликт
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("android/app/build.gradle")
+          text = p.read_text()
+          marker = "// RED_MUSIC_KOTLIN_FIX"
+          fix = """
+// RED_MUSIC_KOTLIN_FIX
+configurations.configureEach {
+    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
+    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group == "org.jetbrains.kotlin") {
+            details.useVersion "1.8.22"
+        }
+    }
+}
+"""
+          if marker not in text:
+              p.write_text(text.rstrip() + "\n" + fix)
+          PY
 
       - name: Проверить Android Gradle Wrapper
         run: |
@@ -138,59 +158,32 @@ jobs:
             find android -maxdepth 3 -type f | sort | head -200
             exit 1
           fi
-
           chmod +x android/gradlew
-
           echo "Gradle Wrapper найден."
 
-      - name: Синхронизировать Capacitor
+      - name: Проверить Render
         run: |
-          npx cap sync android
-
-      - name: Проверить Android после Capacitor sync
-        run: |
-          echo "===== ANDROID STRUCTURE ====="
-          find android -maxdepth 3 -type f | sort | head -200
-
-          echo "===== GRADLE VERSION ====="
-          chmod +x android/gradlew
-          cd android
-          ./gradlew --version
+          curl --fail --silent --show-error https://red-music.onrender.com/health
+          echo
+          curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
+          echo
 
       - name: Собрать APK
         run: |
           chmod +x android/gradlew
-
           cd android
-
-          echo "===== CLEAN ====="
-          ./gradlew clean \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
-
-          echo "===== BUILD DEBUG APK ====="
-          ./gradlew assembleDebug \
-            --no-daemon \
-            --stacktrace \
-            --warning-mode all
+          ./gradlew clean --no-daemon
+          ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Проверить APK
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
-
           if [ ! -f "$APK" ]; then
             echo "ОШИБКА: APK не найден!"
-            echo ""
-            echo "Доступные файлы:"
             find android/app/build -type f | sort | head -200 || true
             exit 1
           fi
-
-          echo "================================"
           echo "APK УСПЕШНО СОЗДАН!"
-          echo "================================"
-
           ls -lh "$APK"
 
       - name: Загрузить APK
