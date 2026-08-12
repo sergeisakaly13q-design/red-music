@@ -31,7 +31,9 @@ jobs:
       - name: Проверить большие аудиофайлы
         run: |
           echo "Аудиофайлы, попавшие в checkout:"
-          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) -not -path "./node_modules/*" -not -path "./.git/*" | head -100 || true
+          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) \
+            -not -path "./node_modules/*" \
+            -not -path "./.git/*" | head -100 || true
 
       - name: Установить зависимости
         run: npm install --no-audit --no-fund
@@ -59,23 +61,34 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path("android/app/build.gradle")
+
+          if not p.exists():
+              raise SystemExit("android/app/build.gradle не найден")
+
           text = p.read_text()
           marker = "// RED_MUSIC_KOTLIN_FIX"
+
           fix = """
-// RED_MUSIC_KOTLIN_FIX
-configurations.configureEach {
-    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
-    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
-    resolutionStrategy.eachDependency { details ->
-        if (details.requested.group == "org.jetbrains.kotlin") {
-            details.useVersion "1.8.22"
-        }
-    }
-}
-"""
+          // RED_MUSIC_KOTLIN_FIX
+          configurations.configureEach {
+              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
+              exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
+
+              resolutionStrategy.eachDependency { details ->
+                  if (details.requested.group == "org.jetbrains.kotlin") {
+                      details.useVersion "1.8.22"
+                  }
+              }
+          }
+          """
+
           if marker not in text:
               p.write_text(text.rstrip() + "\n" + fix)
+
+          print("Kotlin fix проверен")
+
           PY
 
       - name: Проверить Render
