@@ -1,0 +1,67 @@
+
+/* RED MUSIC THEME CONTRAST FIX
+   VIP white accent removed: VIP gets black instead.
+   Important action buttons stay white so they remain readable even
+   when the black VIP accent is selected.
+*/
+.color.vip-black{
+  border-color:#666!important;
+  box-shadow:inset 0 0 0 1px #222;
+}
+.color.vip-black.unlocked{
+  border-color:#777!important;
+}
+.color.vip-black.active{
+  box-shadow:0 0 0 3px #000,0 0 0 5px #fff!important;
+}
+
+/* Settings / admin controls that must remain visible on every accent. */
+#settings .row > button,
+#settings .support-contact .btn,
+#admin .panel:first-child .row > button,
+#admin #adminServerUsers + * .btn,
+#admin .panel:nth-of-type(2) > .btn,
+.settings-actions .btn,
+.contrast-action,
+.white-action{
+  background:#fff!important;
+  color:#111!important;
+  border:1px solid #fff!important;
+  box-shadow:0 1px 0 rgba(255,255,255,.12);
+}
+#settings .row > button:hover,
+#settings .support-contact .btn:hover,
+#admin .panel:first-child .row > button:hover,
+#admin .panel:nth-of-type(2) > .btn:hover,
+.settings-actions .btn:hover,
+.contrast-action:hover,
+.white-action:hover{
+  background:#e9e9e9!important;
+  color:#000!important;
+}
+
+/* White controls stay readable with the black VIP accent. */
+#settings input,
+#admin input,
+#settings textarea,
+#admin textarea,
+#settings select,
+#admin select{
+  color:#fff;
+  border-color:#444;
+}
+
+/* Active navigation remains visibly selected even with a black accent. */
+nav button.active{
+  color:#fff;
+  background:#202020;
+}
+
+/* Black accent: focus/selected UI gets a white outline instead of disappearing. */
+body.vip-black-accent button:focus-visible,
+body.vip-black-accent input:focus-visible,
+body.vip-black-accent select:focus-visible,
+body.vip-black-accent textarea:focus-visible{
+  outline:2px solid #fff;
+  outline-offset:2px;
+}
