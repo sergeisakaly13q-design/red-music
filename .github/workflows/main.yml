@@ -12,7 +12,7 @@ jobs:
 
     steps:
       - name: Скачать проект
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           lfs: true
           fetch-depth: 1
@@ -28,20 +28,49 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Проверить Node и NPM
+      - name: Проверить окружение
         run: |
+          echo "===== NODE ====="
           node --version
+
+          echo "===== NPM ====="
           npm --version
+
+          echo "===== JAVA ====="
+          java -version
+
+          echo "===== PROJECT ====="
+          pwd
+          ls -la
 
       - name: Проверить package.json
         run: |
           if [ ! -f package.json ]; then
-            echo "ОШИБКА: package.json не найден"
+            echo "ОШИБКА: package.json не найден!"
             exit 1
           fi
 
           echo "package.json найден"
           cat package.json
+
+      - name: Проверить public
+        run: |
+          if [ ! -d public ]; then
+            echo "ОШИБКА: папка public не найдена!"
+            exit 1
+          fi
+
+          echo "Папка public найдена"
+          find public -maxdepth 2 -type f | head -100
+
+      - name: Проверить Android
+        run: |
+          if [ -d android ]; then
+            echo "Android проект найден в репозитории"
+            find android -maxdepth 2 -type f | head -100
+          else
+            echo "Android проекта нет. Он будет создан Capacitor."
+          fi
 
       - name: Установить зависимости
         run: |
@@ -50,6 +79,7 @@ jobs:
       - name: Проверить Capacitor
         run: |
           npx cap --version
+          npx cap doctor || true
 
       - name: Создать конфигурацию Capacitor
         run: |
@@ -76,24 +106,44 @@ jobs:
             JSON.stringify(config, null, 2) + "\n"
           );
 
-          console.log("Capacitor config создан");
+          console.log("capacitor.config.json успешно создан:");
+          console.log(JSON.stringify(config, null, 2));
           NODE
 
-      - name: Проверить Android
+      - name: Добавить Android платформу если её нет
         run: |
-          if [ -d android ]; then
-            echo "Android проект найден"
-          else
-            echo "Android проекта нет. Создаём..."
+          if [ ! -d android ]; then
+            echo "Android проекта нет."
+            echo "Создаём Android платформу..."
+
             npx cap add android
+          else
+            echo "Android проект уже существует."
+            echo "Используем существующий Android проект."
           fi
+
+      - name: Проверить Android Gradle Wrapper
+        run: |
+          if [ ! -f android/gradlew ]; then
+            echo "ОШИБКА: android/gradlew не найден!"
+            find android -maxdepth 3 -type f | sort | head -200
+            exit 1
+          fi
+
+          chmod +x android/gradlew
+
+          echo "Gradle Wrapper найден."
 
       - name: Синхронизировать Capacitor
         run: |
           npx cap sync android
 
-      - name: Проверить Gradle
+      - name: Проверить Android после Capacitor sync
         run: |
+          echo "===== ANDROID STRUCTURE ====="
+          find android -maxdepth 3 -type f | sort | head -200
+
+          echo "===== GRADLE VERSION ====="
           chmod +x android/gradlew
           cd android
           ./gradlew --version
@@ -104,10 +154,13 @@ jobs:
 
           cd android
 
+          echo "===== CLEAN ====="
           ./gradlew clean \
             --no-daemon \
-            --stacktrace
+            --stacktrace \
+            --warning-mode all
 
+          echo "===== BUILD DEBUG APK ====="
           ./gradlew assembleDebug \
             --no-daemon \
             --stacktrace \
@@ -118,12 +171,17 @@ jobs:
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "ОШИБКА: APK не найден"
-            find android/app/build -type f | head -100 || true
+            echo "ОШИБКА: APK не найден!"
+            echo ""
+            echo "Доступные файлы:"
+            find android/app/build -type f | sort | head -200 || true
             exit 1
           fi
 
-          echo "APK успешно создан:"
+          echo "================================"
+          echo "APK УСПЕШНО СОЗДАН!"
+          echo "================================"
+
           ls -lh "$APK"
 
       - name: Загрузить APK
