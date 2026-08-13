@@ -69,6 +69,13 @@ jobs:
           if [ ! -d android ]; then
             npx cap add android
           fi
+      - name: Настроить AndroidX и Jetifier
+        run: |
+          touch android/gradle.properties
+          grep -qxF 'android.useAndroidX=true' android/gradle.properties || echo 'android.useAndroidX=true' >> android/gradle.properties
+          grep -qxF 'android.enableJetifier=true' android/gradle.properties || echo 'android.enableJetifier=true' >> android/gradle.properties
+          echo "=== android/gradle.properties ==="
+          cat android/gradle.properties
       - name: Установить генератор иконок
         run: npm install @capacitor/assets --no-save --no-audit --no-fund
       - name: Сгенерировать иконку Red Music для Android
@@ -81,6 +88,8 @@ jobs:
           cat android/build.gradle
           echo "=== android/app/build.gradle ==="
           cat android/app/build.gradle
+          echo "=== android/gradle.properties ==="
+          cat android/gradle.properties
           echo "=== Gradle ==="
           gradle --version
       - name: Проверить Render
