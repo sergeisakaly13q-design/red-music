@@ -53,11 +53,6 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "android/gradlew" ]; then
-            echo "ОШИБКА: android/gradlew отсутствует!"
-            exit 1
-          fi
-
           if [ ! -f "android/app/build.gradle" ]; then
             echo "ОШИБКА: android/app/build.gradle отсутствует!"
             exit 1
@@ -262,37 +257,40 @@ jobs:
           npx cap sync android
 
       # =========================
-      # Gradle Wrapper
+      # НАСТОЯЩИЙ Gradle Wrapper
+      #
+      # В проекте вместо официального gradlew лежал
+      # самодельный скрипт с захардкоженной версией
+      # "8.2.2" (такого релиза Gradle не существует,
+      # отсюда 404). Он игнорировал gradle-wrapper.properties.
+      # Здесь ставим настоящий Gradle через официальный action
+      # и генерируем настоящие gradlew/gradlew.bat/
+      # gradle-wrapper.jar/gradle-wrapper.properties.
       # =========================
-      - name: Настроить Android Gradle Wrapper
+      - name: Установить настоящий Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.4"
+
+      - name: Сгенерировать настоящий Gradle Wrapper
         run: |
           set -e
 
           echo "=============================="
-          echo "НАСТРОЙКА GRADLE WRAPPER"
+          echo "ГЕНЕРАЦИЯ НАСТОЯЩЕГО GRADLE WRAPPER"
           echo "=============================="
 
-          if [ ! -f "android/gradlew" ]; then
-            echo "ОШИБКА: android/gradlew не найден!"
-            exit 1
-          fi
+          cd android
 
-          mkdir -p android/gradle/wrapper
+          rm -f gradlew gradlew.bat
+          rm -rf gradle/wrapper
 
-          cat > android/gradle/wrapper/gradle-wrapper.properties <<'EOF'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2.1-bin.zip
-          networkTimeout=10000
-          validateDistributionUrl=true
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          EOF
+          gradle wrapper --gradle-version 8.4 --distribution-type bin
 
-          chmod +x android/gradlew
+          chmod +x gradlew
 
-          echo "Gradle Wrapper настроен."
-          cat android/gradle/wrapper/gradle-wrapper.properties
+          echo "Wrapper создан:"
+          cat gradle/wrapper/gradle-wrapper.properties
 
       # =========================
       # Проверка Gradle
@@ -300,8 +298,6 @@ jobs:
       - name: Проверить Gradle
         run: |
           cd android
-
-          chmod +x gradlew
 
           ./gradlew --version
 
@@ -326,8 +322,6 @@ jobs:
       - name: Собрать APK
         run: |
           cd android
-
-          chmod +x gradlew
 
           ./gradlew clean --no-daemon
 
