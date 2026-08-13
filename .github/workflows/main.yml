@@ -76,6 +76,40 @@ jobs:
           grep -qxF 'android.enableJetifier=true' android/gradle.properties || echo 'android.enableJetifier=true' >> android/gradle.properties
           echo "=== android/gradle.properties ==="
           cat android/gradle.properties
+      - name: Выровнять JVM target Java/Kotlin в app/build.gradle
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const file = 'android/app/build.gradle';
+          let content = fs.readFileSync(file, 'utf8');
+
+          if (!content.includes('compileOptions')) {
+            content = content.replace(
+              /android\s*\{/,
+              `android {\n    compileOptions {\n        sourceCompatibility JavaVersion.VERSION_17\n        targetCompatibility JavaVersion.VERSION_17\n    }`
+            );
+          } else {
+            content = content
+              .replace(/sourceCompatibility\s+JavaVersion\.VERSION_\d+/g, 'sourceCompatibility JavaVersion.VERSION_17')
+              .replace(/targetCompatibility\s+JavaVersion\.VERSION_\d+/g, 'targetCompatibility JavaVersion.VERSION_17');
+          }
+
+          if (!content.includes('kotlinOptions')) {
+            content = content.replace(
+              /android\s*\{/,
+              `android {\n    kotlinOptions {\n        jvmTarget = "17"\n    }`
+            );
+          } else {
+            content = content.replace(
+              /jvmTarget\s*=\s*["']\d+["']/g,
+              'jvmTarget = "17"'
+            );
+          }
+
+          fs.writeFileSync(file, content);
+          console.log('=== android/app/build.gradle (после патча) ===');
+          console.log(content);
+          NODE
       - name: Установить генератор иконок
         run: npm install @capacitor/assets --no-save --no-audit --no-fund
       - name: Сгенерировать иконку Red Music для Android
