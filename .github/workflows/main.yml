@@ -28,10 +28,10 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Установить Gradle 8.2.1
+      - name: Установить Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.2.1'
+          gradle-version: '8.7'
 
       - name: Проверить проект
         run: |
@@ -95,10 +95,10 @@ jobs:
               p.write_text(text.rstrip() + '\n' + fix)
           PY
 
-      - name: Настроить Android Gradle Wrapper 8.2.1
+      - name: Настроить Android Gradle Wrapper 8.7
         run: |
           cd android
-          gradle wrapper --gradle-version 8.2.1 --distribution-type bin --no-daemon
+          gradle wrapper --gradle-version 8.7 --distribution-type bin --no-daemon
           chmod +x gradlew
           ./gradlew --version
 
