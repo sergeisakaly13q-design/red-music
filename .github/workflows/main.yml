@@ -27,100 +27,173 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: "20"
+          cache: npm
+
+      - name: Проверить проект
+        run: |
+          echo "Проверяем структуру проекта..."
+
+          if [ ! -d "android" ]; then
+            echo "ОШИБКА: папка android отсутствует!"
+            exit 1
+          fi
+
+          if [ ! -f "android/gradlew" ]; then
+            echo "ОШИБКА: android/gradlew отсутствует!"
+            exit 1
+          fi
+
+          if [ ! -f "android/app/build.gradle" ]; then
+            echo "ОШИБКА: android/app/build.gradle отсутствует!"
+            exit 1
+          fi
+
+          if [ ! -f "android/app/src/main/AndroidManifest.xml" ]; then
+            echo "ОШИБКА: AndroidManifest.xml отсутствует!"
+            exit 1
+          fi
+
+          echo "Android-проект найден."
+
+      - name: Проверить Media3 файлы
+        run: |
+          echo "Проверяем Media3..."
+
+          find android/app/src/main -type f \
+            \( -name "RedMusicMediaService.kt" \
+            -o -name "RedMusicMediaPlugin.kt" \
+            -o -name "MainActivity.kt" \) \
+            -print
+
+          if [ ! -f "android/app/src/main/java/com/redmusic/app/RedMusicMediaService.kt" ]; then
+            echo "ОШИБКА: RedMusicMediaService.kt не найден!"
+            exit 1
+          fi
+
+          if [ ! -f "android/app/src/main/java/com/redmusic/app/RedMusicMediaPlugin.kt" ]; then
+            echo "ОШИБКА: RedMusicMediaPlugin.kt не найден!"
+            exit 1
+          fi
+
+          echo "Media3-файлы найдены."
 
       - name: Проверить большие аудиофайлы
         run: |
           echo "Аудиофайлы, попавшие в checkout:"
-          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) -not -path "./node_modules/*" -not -path "./.git/*" | head -100 || true
+
+          find . -type f \
+            \( -iname "*.mp3" \
+            -o -iname "*.wav" \
+            -o -iname "*.ogg" \
+            -o -iname "*.m4a" \
+            -o -iname "*.flac" \) \
+            -not -path "./node_modules/*" \
+            -not -path "./.git/*" \
+            | head -100 || true
 
       - name: Установить зависимости
         run: npm install --no-audit --no-fund
 
-      - name: Добавить Android платформу
-        run: |
-          # android/ никогда не хранится в git — генерируем с нуля
-          # каждый раз, чтобы всегда получать полный проект с gradlew.
-          rm -rf android
-          npx cap add android
+      - name: Установить генератор иконок
+        run: npm install @capacitor/assets --no-save
 
-      - name: Наложить кастомный MediaSession-код
-        run: |
-          mkdir -p android/app/src/main/java/com/redmusic/app
-          cp android-overlay/java/com/redmusic/app/MainActivity.kt \
-             android/app/src/main/java/com/redmusic/app/MainActivity.kt
-          cp android-overlay/java/com/redmusic/app/RedMusicMediaPlugin.kt \
-             android/app/src/main/java/com/redmusic/app/RedMusicMediaPlugin.kt
-          cp android-overlay/java/com/redmusic/app/RedMusicMediaService.kt \
-             android/app/src/main/java/com/redmusic/app/RedMusicMediaService.kt
-
-          mkdir -p android/app/src/main/res/drawable
-          cp android-overlay/res/drawable/ic_music_notification.xml \
-             android/app/src/main/res/drawable/ic_music_notification.xml
-
-          echo "Кастомные файлы скопированы."
-
-      - name: Патч AndroidManifest.xml для MediaSession
+      - name: Проверить Media3 зависимости
         run: |
           python3 - <<'PY'
+          from pathlib import Path
           import re
+
+          p = Path("android/app/build.gradle")
+          text = p.read_text()
+
+          media3_version = "1.10.1"
+
+          required = [
+              f'implementation "androidx.media3:media3-exoplayer:{media3_version}"',
+              f'implementation "androidx.media3:media3-session:{media3_version}"'
+          ]
+
+          # Удаляем старую androidx.media, если она осталась
+          text = re.sub(
+              r'^\s*implementation\s+[\'"]androidx\.media:media:[^\'"]+[\'"]\s*$',
+              '',
+              text,
+              flags=re.MULTILINE
+          )
+
+          # Если dependencies уже есть, добавляем Media3 внутрь него.
+          if "androidx.media3:media3-exoplayer" not in text:
+              match = re.search(r'dependencies\s*\{', text)
+
+              if match:
+                  insert_pos = match.end()
+
+                  additions = (
+                      f'\n    {required[0]}\n'
+                      f'    {required[1]}\n'
+                  )
+
+                  text = text[:insert_pos] + additions + text[insert_pos:]
+
+              else:
+                  text += (
+                      "\n\ndependencies {\n"
+                      f"    {required[0]}\n"
+                      f"    {required[1]}\n"
+                      "}\n"
+                  )
+
+          p.write_text(text)
+
+          print("Media3 зависимости проверены.")
+          print(f"Media3 версия: {media3_version}")
+          PY
+
+      - name: Проверить AndroidManifest для Media3
+        run: |
+          python3 - <<'PY'
           from pathlib import Path
 
           p = Path("android/app/src/main/AndroidManifest.xml")
           text = p.read_text()
-          marker = "<!-- RED_MUSIC_MEDIA_SESSION -->"
 
-          if marker not in text:
-              permissions = (
-                  marker + "\n"
-                  '    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n'
-                  '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n'
-                  '    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n'
-                  '    <uses-permission android:name="android.permission.WAKE_LOCK" />\n'
+          required_permissions = [
+              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+              '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
+              '<uses-permission android:name="android.permission.WAKE_LOCK" />'
+          ]
+
+          for permission in required_permissions:
+              if permission not in text:
+                  text = text.replace(
+                      "</manifest>",
+                      f"    {permission}\n</manifest>"
+                  )
+
+          service_name = 'android:name=".RedMusicMediaService"'
+
+          if service_name not in text:
+              service_block = '''
+          <service
+              android:name=".RedMusicMediaService"
+              android:exported="true"
+              android:foregroundServiceType="mediaPlayback">
+              <intent-filter>
+                  <action android:name="androidx.media3.session.MediaSessionService" />
+              </intent-filter>
+          </service>
+          '''
+
+              text = text.replace(
+                  "</application>",
+                  service_block + "\n    </application>",
+                  1
               )
-              text = re.sub(r'(<manifest[^>]*>)', r'\1\n' + permissions, text, count=1)
 
-              service_block = (
-                  '        <service\n'
-                  '            android:name=".RedMusicMediaService"\n'
-                  '            android:exported="false"\n'
-                  '            android:foregroundServiceType="mediaPlayback">\n'
-                  '            <intent-filter>\n'
-                  '                <action android:name="android.intent.action.MEDIA_BUTTON" />\n'
-                  '            </intent-filter>\n'
-                  '        </service>\n'
-              )
-              text = text.replace("</application>", service_block + "    </application>", 1)
+          p.write_text(text)
 
-              p.write_text(text)
-              print("AndroidManifest.xml пропатчен")
-          else:
-              print("AndroidManifest.xml уже пропатчен, пропускаем")
+          print("AndroidManifest.xml проверен.")
           PY
-
-      - name: Патч build.gradle для androidx.media
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-
-          p = Path("android/app/build.gradle")
-          text = p.read_text()
-          marker = "// RED_MUSIC_MEDIA_DEPENDENCY"
-
-          if marker not in text:
-              addition = (
-                  f"\n{marker}\n"
-                  "dependencies {\n"
-                  '    implementation "androidx.media:media:1.7.0"\n'
-                  "}\n"
-              )
-              p.write_text(text.rstrip() + "\n" + addition)
-              print("build.gradle пропатчен (androidx.media добавлен)")
-          else:
-              print("build.gradle уже пропатчен, пропускаем")
-          PY
-
-      - name: Установить генератор иконок
-        run: npm install @capacitor/assets --no-save
 
       - name: Сгенерировать иконку Red Music для Android
         run: npx capacitor-assets generate --android
@@ -128,62 +201,61 @@ jobs:
       - name: Синхронизировать Capacitor
         run: npx cap sync android
 
-      - name: Исправить Kotlin stdlib конфликт
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path("android/app/build.gradle")
-          text = p.read_text()
-          marker = "// RED_MUSIC_KOTLIN_FIX"
-          fix = (
-              "\n// RED_MUSIC_KOTLIN_FIX\n"
-              "configurations.configureEach {\n"
-              '    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"\n'
-              '    exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"\n'
-              "    resolutionStrategy.eachDependency { details ->\n"
-              '        if (details.requested.group == "org.jetbrains.kotlin") {\n'
-              '            details.useVersion "1.8.22"\n'
-              "        }\n"
-              "    }\n"
-              "}\n"
-          )
-          if marker not in text:
-              p.write_text(text.rstrip() + "\n" + fix)
-          PY
-
       - name: Проверить Android Gradle Wrapper
         run: |
           if [ ! -f android/gradlew ]; then
             echo "ОШИБКА: android/gradlew не найден!"
-            find android -maxdepth 3 -type f | sort | head -200
             exit 1
           fi
+
           chmod +x android/gradlew
+
           echo "Gradle Wrapper найден."
+          android/gradlew --version
 
       - name: Проверить Render
         run: |
-          curl --fail --silent --show-error https://red-music.onrender.com/health
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/health
+
           echo
-          curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
+
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/api/music/public-health
+
           echo
 
       - name: Собрать APK
         run: |
           chmod +x android/gradlew
+
           cd android
+
           ./gradlew clean --no-daemon
-          ./gradlew assembleDebug --no-daemon --stacktrace
+
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --stacktrace
 
       - name: Проверить APK
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
+
           if [ ! -f "$APK" ]; then
             echo "ОШИБКА: APK не найден!"
-            find android/app/build -type f | sort | head -200 || true
+
+            find android/app/build \
+              -type f \
+              | sort \
+              | head -200 || true
+
             exit 1
           fi
+
+          echo "===================================="
           echo "APK УСПЕШНО СОЗДАН!"
+          echo "===================================="
+
           ls -lh "$APK"
 
       - name: Загрузить APK
