@@ -27,6 +27,7 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: "20"
+          cache: npm
 
       - name: Проверить проект
         run: |
@@ -74,6 +75,11 @@ jobs:
             exit 1
           fi
 
+          if [ ! -f "android/app/src/main/java/com/redmusic/app/MainActivity.kt" ]; then
+            echo "ОШИБКА: MainActivity.kt не найден!"
+            exit 1
+          fi
+
           echo "Media3-файлы найдены."
 
       - name: Проверить большие аудиофайлы
@@ -91,10 +97,15 @@ jobs:
             | head -100 || true
 
       - name: Установить зависимости
-        run: npm install --no-audit --no-fund
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
+          fi
 
       - name: Установить генератор иконок
-        run: npm install @capacitor/assets --no-save
+        run: npm install @capacitor/assets --no-save --no-audit --no-fund
 
       - name: Проверить Media3 зависимости
         run: |
@@ -105,13 +116,15 @@ jobs:
           p = Path("android/app/build.gradle")
 
           if not p.exists():
-              raise SystemExit("ОШИБКА: android/app/build.gradle не найден!")
+              raise SystemExit(
+                  "ОШИБКА: android/app/build.gradle не найден!"
+              )
 
           text = p.read_text()
 
           media3_version = "1.10.1"
 
-          # Удаляем старую androidx.media, если она осталась
+          # Удаляем старую androidx.media
           text = re.sub(
               r'^\s*implementation\s+[\'"]androidx\.media:media:[^\'"]+[\'"]\s*$',
               '',
@@ -127,32 +140,44 @@ jobs:
               f'implementation "androidx.media3:media3-session:{media3_version}"'
           )
 
-          # Добавляем Media3 только если её ещё нет
-          if "androidx.media3:media3-exoplayer" not in text:
+          # Удаляем старые Media3 зависимости, чтобы не было конфликтов
+          text = re.sub(
+              r'^\s*implementation\s+[\'"]androidx\.media3:media3-exoplayer:[^\'"]+[\'"]\s*$',
+              '',
+              text,
+              flags=re.MULTILINE
+          )
 
-              match = re.search(r'dependencies\s*\{', text)
+          text = re.sub(
+              r'^\s*implementation\s+[\'"]androidx\.media3:media3-session:[^\'"]+[\'"]\s*$',
+              '',
+              text,
+              flags=re.MULTILINE
+          )
 
-              if match:
-                  insert_pos = match.end()
+          match = re.search(r'dependencies\s*\{', text)
 
-                  additions = (
-                      f"\n    {exoplayer}\n"
-                      f"    {session}\n"
-                  )
+          if match:
+              insert_pos = match.end()
 
-                  text = text[:insert_pos] + additions + text[insert_pos:]
+              additions = (
+                  f"\n    {exoplayer}\n"
+                  f"    {session}\n"
+              )
 
-              else:
-                  text += (
-                      "\n\ndependencies {\n"
-                      f"    {exoplayer}\n"
-                      f"    {session}\n"
-                      "}\n"
-                  )
+              text = text[:insert_pos] + additions + text[insert_pos:]
+
+          else:
+              text += (
+                  "\n\ndependencies {\n"
+                  f"    {exoplayer}\n"
+                  f"    {session}\n"
+                  "}\n"
+              )
 
           p.write_text(text)
 
-          print("Media3 зависимости проверены.")
+          print("Media3 зависимости установлены.")
           print(f"Media3 версия: {media3_version}")
           PY
 
@@ -187,7 +212,6 @@ jobs:
           service_name = 'android:name=".RedMusicMediaService"'
 
           if service_name not in text:
-
               service_block = '''
           <service
               android:name=".RedMusicMediaService"
@@ -216,6 +240,36 @@ jobs:
       - name: Синхронизировать Capacitor
         run: npx cap sync android
 
+      # ВАЖНО:
+      # Capacitor может изменить Gradle Wrapper после sync.
+      # Поэтому принудительно задаём рабочую версию ПОСЛЕ sync.
+      - name: Зафиксировать Android Gradle Wrapper
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("android/gradle/wrapper/gradle-wrapper.properties")
+
+          if not p.exists():
+              raise SystemExit(
+                  "ОШИБКА: android/gradle/wrapper/gradle-wrapper.properties не найден!"
+              )
+
+          content = """distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\\://services.gradle.org/distributions/gradle-8.2.1-bin.zip
+          networkTimeout=10000
+          validateDistributionUrl=true
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          """
+
+          p.write_text(content.strip() + "\n")
+
+          print("Gradle Wrapper зафиксирован на версии 8.2.1.")
+          print(p.read_text())
+          PY
+
       - name: Проверить Android Gradle Wrapper
         run: |
           if [ ! -f android/gradlew ]; then
@@ -223,22 +277,45 @@ jobs:
             exit 1
           fi
 
+          if [ ! -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+            echo "ОШИБКА: gradle-wrapper.properties не найден!"
+            exit 1
+          fi
+
           chmod +x android/gradlew
 
+          echo "===================================="
           echo "Gradle Wrapper найден."
-          android/gradlew --version
+          echo "===================================="
+
+          echo "Версия из gradle-wrapper.properties:"
+          grep "distributionUrl" \
+            android/gradle/wrapper/gradle-wrapper.properties
+
+          echo "===================================="
+          echo "Запускаем Gradle Wrapper..."
+          echo "===================================="
+
+          cd android
+          ./gradlew --version --no-daemon
 
       - name: Проверить Render
         run: |
+          echo "Проверяем основной сервер..."
+
           curl --fail --silent --show-error \
             https://red-music.onrender.com/health
 
           echo
 
+          echo "Проверяем музыкальный API..."
+
           curl --fail --silent --show-error \
             https://red-music.onrender.com/api/music/public-health
 
           echo
+
+          echo "Render работает."
 
       - name: Собрать APK
         run: |
@@ -246,7 +323,15 @@ jobs:
 
           cd android
 
+          echo "===================================="
+          echo "ОЧИСТКА GRADLE"
+          echo "===================================="
+
           ./gradlew clean --no-daemon
+
+          echo "===================================="
+          echo "СБОРКА RED MUSIC APK"
+          echo "===================================="
 
           ./gradlew assembleDebug \
             --no-daemon \
@@ -259,8 +344,10 @@ jobs:
           if [ ! -f "$APK" ]; then
             echo "ОШИБКА: APK не найден!"
 
+            echo "Ищем созданные APK:"
             find android/app/build \
               -type f \
+              \( -name "*.apk" -o -name "*.aab" \) \
               | sort \
               | head -200 || true
 
