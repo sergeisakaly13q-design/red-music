@@ -11,27 +11,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ==========================================
+      # 1. Скачать проект
+      # ==========================================
       - name: Скачать проект
         uses: actions/checkout@v5
         with:
           lfs: true
           fetch-depth: 1
 
+      # ==========================================
+      # 2. Java 17
+      # ==========================================
       - name: Установить Java 17
         uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
+      # ==========================================
+      # 3. Node.js 20
+      # ВАЖНО: cache НЕ используем,
+      # потому что package-lock.json отсутствует
+      # ==========================================
       - name: Установить Node.js
         uses: actions/setup-node@v5
         with:
           node-version: "20"
-          cache: npm
 
+      # ==========================================
+      # 4. Проверка проекта
+      # ==========================================
       - name: Проверить проект
         run: |
-          echo "Проверяем структуру проекта..."
+          echo "===================================="
+          echo "ПРОВЕРКА ПРОЕКТА"
+          echo "===================================="
 
           if [ ! -d "android" ]; then
             echo "ОШИБКА: папка android отсутствует!"
@@ -53,16 +68,28 @@ jobs:
             exit 1
           fi
 
-          echo "Android-проект найден."
+          if [ ! -f "package.json" ]; then
+            echo "ОШИБКА: package.json отсутствует!"
+            exit 1
+          fi
 
+          echo "Проект найден."
+          echo "Android-проект найден."
+          echo "package.json найден."
+
+      # ==========================================
+      # 5. Проверка Media3 файлов
+      # ==========================================
       - name: Проверить Media3 файлы
         run: |
-          echo "Проверяем Media3..."
+          echo "===================================="
+          echo "ПРОВЕРКА MEDIA3"
+          echo "===================================="
 
           find android/app/src/main -type f \
-            \( -name "RedMusicMediaService.kt" \
+            \( -name "MainActivity.kt" \
             -o -name "RedMusicMediaPlugin.kt" \
-            -o -name "MainActivity.kt" \) \
+            -o -name "RedMusicMediaService.kt" \) \
             -print
 
           if [ ! -f "android/app/src/main/java/com/redmusic/app/RedMusicMediaService.kt" ]; then
@@ -80,11 +107,14 @@ jobs:
             exit 1
           fi
 
-          echo "Media3-файлы найдены."
+          echo "Media3 файлы найдены."
 
+      # ==========================================
+      # 6. Проверка аудио
+      # ==========================================
       - name: Проверить большие аудиофайлы
         run: |
-          echo "Аудиофайлы, попавшие в checkout:"
+          echo "Аудиофайлы проекта:"
 
           find . -type f \
             \( -iname "*.mp3" \
@@ -96,17 +126,23 @@ jobs:
             -not -path "./.git/*" \
             | head -100 || true
 
+      # ==========================================
+      # 7. Установить npm зависимости
+      # ==========================================
       - name: Установить зависимости
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci --no-audit --no-fund
-          else
-            npm install --no-audit --no-fund
-          fi
+          npm install --no-audit --no-fund --legacy-peer-deps
 
+      # ==========================================
+      # 8. Установить Capacitor Assets
+      # ==========================================
       - name: Установить генератор иконок
-        run: npm install @capacitor/assets --no-save --no-audit --no-fund
+        run: |
+          npm install @capacitor/assets --no-save --legacy-peer-deps
 
+      # ==========================================
+      # 9. Проверить Media3 зависимости
+      # ==========================================
       - name: Проверить Media3 зависимости
         run: |
           python3 - <<'PY'
@@ -140,47 +176,41 @@ jobs:
               f'implementation "androidx.media3:media3-session:{media3_version}"'
           )
 
-          # Удаляем старые Media3 зависимости, чтобы не было конфликтов
-          text = re.sub(
-              r'^\s*implementation\s+[\'"]androidx\.media3:media3-exoplayer:[^\'"]+[\'"]\s*$',
-              '',
-              text,
-              flags=re.MULTILINE
-          )
+          if "androidx.media3:media3-exoplayer" not in text:
 
-          text = re.sub(
-              r'^\s*implementation\s+[\'"]androidx\.media3:media3-session:[^\'"]+[\'"]\s*$',
-              '',
-              text,
-              flags=re.MULTILINE
-          )
+              match = re.search(r'dependencies\s*\{', text)
 
-          match = re.search(r'dependencies\s*\{', text)
+              if match:
+                  insert_pos = match.end()
 
-          if match:
-              insert_pos = match.end()
+                  additions = (
+                      f"\n    {exoplayer}\n"
+                      f"    {session}\n"
+                  )
 
-              additions = (
-                  f"\n    {exoplayer}\n"
-                  f"    {session}\n"
-              )
+                  text = (
+                      text[:insert_pos]
+                      + additions
+                      + text[insert_pos:]
+                  )
 
-              text = text[:insert_pos] + additions + text[insert_pos:]
-
-          else:
-              text += (
-                  "\n\ndependencies {\n"
-                  f"    {exoplayer}\n"
-                  f"    {session}\n"
-                  "}\n"
-              )
+              else:
+                  text += (
+                      "\n\ndependencies {\n"
+                      f"    {exoplayer}\n"
+                      f"    {session}\n"
+                      "}\n"
+                  )
 
           p.write_text(text)
 
-          print("Media3 зависимости установлены.")
+          print("Media3 зависимости проверены.")
           print(f"Media3 версия: {media3_version}")
           PY
 
+      # ==========================================
+      # 10. Проверить AndroidManifest
+      # ==========================================
       - name: Проверить AndroidManifest для Media3
         run: |
           python3 - <<'PY'
@@ -190,7 +220,7 @@ jobs:
 
           if not p.exists():
               raise SystemExit(
-                  "ОШИБКА: android/app/src/main/AndroidManifest.xml не найден!"
+                  "ОШИБКА: AndroidManifest.xml не найден!"
               )
 
           text = p.read_text()
@@ -212,6 +242,7 @@ jobs:
           service_name = 'android:name=".RedMusicMediaService"'
 
           if service_name not in text:
+
               service_block = '''
           <service
               android:name=".RedMusicMediaService"
@@ -234,89 +265,69 @@ jobs:
           print("AndroidManifest.xml проверен.")
           PY
 
+      # ==========================================
+      # 11. Генерация иконок
+      # ==========================================
       - name: Сгенерировать иконку Red Music для Android
-        run: npx capacitor-assets generate --android
-
-      - name: Синхронизировать Capacitor
-        run: npx cap sync android
-
-      # ВАЖНО:
-      # Capacitor может изменить Gradle Wrapper после sync.
-      # Поэтому принудительно задаём рабочую версию ПОСЛЕ sync.
-      - name: Зафиксировать Android Gradle Wrapper
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          npx capacitor-assets generate --android
 
-          p = Path("android/gradle/wrapper/gradle-wrapper.properties")
+      # ==========================================
+      # 12. Capacitor sync
+      # ==========================================
+      - name: Синхронизировать Capacitor
+        run: |
+          npx cap sync android
 
-          if not p.exists():
-              raise SystemExit(
-                  "ОШИБКА: android/gradle/wrapper/gradle-wrapper.properties не найден!"
-              )
-
-          content = """distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=https\\://services.gradle.org/distributions/gradle-8.2.1-bin.zip
-          networkTimeout=10000
-          validateDistributionUrl=true
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          """
-
-          p.write_text(content.strip() + "\n")
-
-          print("Gradle Wrapper зафиксирован на версии 8.2.1.")
-          print(p.read_text())
-          PY
-
+      # ==========================================
+      # 13. Проверка Gradle Wrapper
+      # ==========================================
       - name: Проверить Android Gradle Wrapper
         run: |
-          if [ ! -f android/gradlew ]; then
+          echo "===================================="
+          echo "ПРОВЕРКА GRADLE WRAPPER"
+          echo "===================================="
+
+          if [ ! -f "android/gradlew" ]; then
             echo "ОШИБКА: android/gradlew не найден!"
             exit 1
           fi
 
-          if [ ! -f android/gradle/wrapper/gradle-wrapper.properties ]; then
+          if [ ! -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
             echo "ОШИБКА: gradle-wrapper.properties не найден!"
             exit 1
           fi
 
           chmod +x android/gradlew
 
-          echo "===================================="
           echo "Gradle Wrapper найден."
-          echo "===================================="
-
-          echo "Версия из gradle-wrapper.properties:"
-          grep "distributionUrl" \
-            android/gradle/wrapper/gradle-wrapper.properties
-
-          echo "===================================="
-          echo "Запускаем Gradle Wrapper..."
-          echo "===================================="
-
+          echo
+          echo "Версия Gradle:"
           cd android
-          ./gradlew --version --no-daemon
+          ./gradlew --version
 
+      # ==========================================
+      # 14. Проверка Render
+      # ==========================================
       - name: Проверить Render
         run: |
-          echo "Проверяем основной сервер..."
+          echo "Проверяем сервер Red Music..."
 
           curl --fail --silent --show-error \
+            --max-time 30 \
             https://red-music.onrender.com/health
 
           echo
 
-          echo "Проверяем музыкальный API..."
-
           curl --fail --silent --show-error \
+            --max-time 30 \
             https://red-music.onrender.com/api/music/public-health
 
           echo
 
-          echo "Render работает."
-
+      # ==========================================
+      # 15. Сборка APK
+      # ==========================================
       - name: Собрать APK
         run: |
           chmod +x android/gradlew
@@ -330,13 +341,16 @@ jobs:
           ./gradlew clean --no-daemon
 
           echo "===================================="
-          echo "СБОРКА RED MUSIC APK"
+          echo "СБОРКА DEBUG APK"
           echo "===================================="
 
           ./gradlew assembleDebug \
             --no-daemon \
             --stacktrace
 
+      # ==========================================
+      # 16. Проверить APK
+      # ==========================================
       - name: Проверить APK
         run: |
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -344,10 +358,9 @@ jobs:
           if [ ! -f "$APK" ]; then
             echo "ОШИБКА: APK не найден!"
 
-            echo "Ищем созданные APK:"
+            echo "Содержимое build:"
             find android/app/build \
               -type f \
-              \( -name "*.apk" -o -name "*.aab" \) \
               | sort \
               | head -200 || true
 
@@ -360,6 +373,9 @@ jobs:
 
           ls -lh "$APK"
 
+      # ==========================================
+      # 17. Загрузить APK
+      # ==========================================
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
