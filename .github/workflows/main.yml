@@ -55,18 +55,36 @@ jobs:
       - name: Синхронизировать Capacitor
         run: npx cap sync android
 
+      - name: Установить Gradle Wrapper 8.7
+        run: |
+          test -f android/gradle/wrapper/gradle-wrapper.properties
+
+          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-bin.zip#' \
+            android/gradle/wrapper/gradle-wrapper.properties
+
+          echo "Текущий Gradle Wrapper:"
+          grep '^distributionUrl=' android/gradle/wrapper/gradle-wrapper.properties
+
       - name: Исправить Kotlin stdlib конфликт
         run: |
           python3 - <<'PY'
           from pathlib import Path
+
           p = Path("android/app/build.gradle")
+
+          if not p.exists():
+              raise SystemExit("Ошибка: android/app/build.gradle не найден")
+
           text = p.read_text()
+
           marker = "// RED_MUSIC_KOTLIN_FIX"
+
           fix = """
 // RED_MUSIC_KOTLIN_FIX
 configurations.configureEach {
     exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk7"
     exclude group: "org.jetbrains.kotlin", module: "kotlin-stdlib-jdk8"
+
     resolutionStrategy.eachDependency { details ->
         if (details.requested.group == "org.jetbrains.kotlin") {
             details.useVersion "1.8.22"
@@ -74,8 +92,11 @@ configurations.configureEach {
     }
 }
 """
+
           if marker not in text:
               p.write_text(text.rstrip() + "\n" + fix)
+
+          print("Kotlin stdlib fix проверен.")
           PY
 
       - name: Проверить Render
@@ -84,6 +105,12 @@ configurations.configureEach {
           echo
           curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
           echo
+
+      - name: Проверить Gradle
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew --version
 
       - name: Собрать APK
         run: |
