@@ -31,18 +31,42 @@ jobs:
       - name: Проверить большие аудиофайлы
         run: |
           echo "Аудиофайлы, попавшие в checkout:"
-          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) -not -path "./node_modules/*" -not -path "./.git/*" | head -100 || true
+          find . -type f \( \
+            -iname "*.mp3" \
+            -o -iname "*.wav" \
+            -o -iname "*.ogg" \
+            -o -iname "*.m4a" \
+            -o -iname "*.flac" \
+          \) \
+          -not -path "./node_modules/*" \
+          -not -path "./.git/*" | head -100 || true
 
       - name: Установить зависимости
         run: npm install --no-audit --no-fund
 
       - name: Создать конфигурацию Capacitor
         run: |
-          node -e "require('fs').writeFileSync('capacitor.config.json', JSON.stringify({appId:'com.redmusic.app',appName:'Red Music',webDir:'public',server:{url:'https://red-music.onrender.com',cleartext:false,androidScheme:'https',allowNavigation:['red-music.onrender.com','*.onrender.com']}},null,2)+'\n')"
+          node -e "require('fs').writeFileSync(
+            'capacitor.config.json',
+            JSON.stringify({
+              appId: 'com.redmusic.app',
+              appName: 'Red Music',
+              webDir: 'public',
+              server: {
+                url: 'https://red-music.onrender.com',
+                cleartext: false,
+                androidScheme: 'https',
+                allowNavigation: [
+                  'red-music.onrender.com',
+                  '*.onrender.com'
+                ]
+              }
+            }, null, 2) + '\n'
+          )"
 
       - name: Добавить Android платформу
         run: |
-          if [ ! -d android ]; then
+          if [ ! -d "android" ]; then
             npx cap add android
           fi
 
@@ -55,27 +79,17 @@ jobs:
       - name: Синхронизировать Capacitor
         run: npx cap sync android
 
-      - name: Установить Gradle Wrapper 8.7
-        run: |
-          test -f android/gradle/wrapper/gradle-wrapper.properties
-
-          sed -i 's#^distributionUrl=.*#distributionUrl=https\\://services.gradle.org/distributions/gradle-8.7-bin.zip#' \
-            android/gradle/wrapper/gradle-wrapper.properties
-
-          echo "Текущий Gradle Wrapper:"
-          grep '^distributionUrl=' android/gradle/wrapper/gradle-wrapper.properties
-
       - name: Исправить Kotlin stdlib конфликт
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("android/app/build.gradle")
+          path = Path("android/app/build.gradle")
 
-          if not p.exists():
-              raise SystemExit("Ошибка: android/app/build.gradle не найден")
+          if not path.exists():
+              raise SystemExit("android/app/build.gradle не найден")
 
-          text = p.read_text()
+          text = path.read_text()
 
           marker = "// RED_MUSIC_KOTLIN_FIX"
 
@@ -94,23 +108,20 @@ configurations.configureEach {
 """
 
           if marker not in text:
-              p.write_text(text.rstrip() + "\n" + fix)
-
-          print("Kotlin stdlib fix проверен.")
+              path.write_text(text.rstrip() + "\n" + fix)
           PY
 
       - name: Проверить Render
         run: |
-          curl --fail --silent --show-error https://red-music.onrender.com/health
-          echo
-          curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/health
+
           echo
 
-      - name: Проверить Gradle
-        run: |
-          chmod +x android/gradlew
-          cd android
-          ./gradlew --version
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/api/music/public-health
+
+          echo
 
       - name: Собрать APK
         run: |
