@@ -106,6 +106,17 @@ jobs:
             );
           }
 
+          if (!content.includes('androidx.appcompat:appcompat')) {
+            if (/dependencies\s*\{/.test(content)) {
+              content = content.replace(
+                /dependencies\s*\{/,
+                `dependencies {\n    implementation "androidx.appcompat:appcompat:1.6.1"`
+              );
+            } else {
+              content += `\n\ndependencies {\n    implementation "androidx.appcompat:appcompat:1.6.1"\n}\n`;
+            }
+          }
+
           fs.writeFileSync(file, content);
           console.log('=== android/app/build.gradle (после патча) ===');
           console.log(content);
