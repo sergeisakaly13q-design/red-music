@@ -27,7 +27,6 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: "20"
-          cache: npm
 
       - name: Проверить проект
         run: |
@@ -104,14 +103,13 @@ jobs:
           import re
 
           p = Path("android/app/build.gradle")
+
+          if not p.exists():
+              raise SystemExit("ОШИБКА: android/app/build.gradle не найден!")
+
           text = p.read_text()
 
           media3_version = "1.10.1"
-
-          required = [
-              f'implementation "androidx.media3:media3-exoplayer:{media3_version}"',
-              f'implementation "androidx.media3:media3-session:{media3_version}"'
-          ]
 
           # Удаляем старую androidx.media, если она осталась
           text = re.sub(
@@ -121,16 +119,25 @@ jobs:
               flags=re.MULTILINE
           )
 
-          # Если dependencies уже есть, добавляем Media3 внутрь него.
+          exoplayer = (
+              f'implementation "androidx.media3:media3-exoplayer:{media3_version}"'
+          )
+
+          session = (
+              f'implementation "androidx.media3:media3-session:{media3_version}"'
+          )
+
+          # Добавляем Media3 только если её ещё нет
           if "androidx.media3:media3-exoplayer" not in text:
+
               match = re.search(r'dependencies\s*\{', text)
 
               if match:
                   insert_pos = match.end()
 
                   additions = (
-                      f'\n    {required[0]}\n'
-                      f'    {required[1]}\n'
+                      f"\n    {exoplayer}\n"
+                      f"    {session}\n"
                   )
 
                   text = text[:insert_pos] + additions + text[insert_pos:]
@@ -138,8 +145,8 @@ jobs:
               else:
                   text += (
                       "\n\ndependencies {\n"
-                      f"    {required[0]}\n"
-                      f"    {required[1]}\n"
+                      f"    {exoplayer}\n"
+                      f"    {session}\n"
                       "}\n"
                   )
 
@@ -155,24 +162,32 @@ jobs:
           from pathlib import Path
 
           p = Path("android/app/src/main/AndroidManifest.xml")
+
+          if not p.exists():
+              raise SystemExit(
+                  "ОШИБКА: android/app/src/main/AndroidManifest.xml не найден!"
+              )
+
           text = p.read_text()
 
-          required_permissions = [
+          permissions = [
               '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
               '<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />',
               '<uses-permission android:name="android.permission.WAKE_LOCK" />'
           ]
 
-          for permission in required_permissions:
+          for permission in permissions:
               if permission not in text:
                   text = text.replace(
                       "</manifest>",
-                      f"    {permission}\n</manifest>"
+                      f"    {permission}\n</manifest>",
+                      1
                   )
 
           service_name = 'android:name=".RedMusicMediaService"'
 
           if service_name not in text:
+
               service_block = '''
           <service
               android:name=".RedMusicMediaService"
