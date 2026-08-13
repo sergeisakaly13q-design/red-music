@@ -18,21 +18,87 @@ jobs:
           fetch-depth: 1
 
       - name: Setup Java 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Setup Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Create Capacitor configuration
+        run: |
+          node -e "require('fs').writeFileSync('capacitor.config.json', JSON.stringify({
+            appId:'com.redmusic.app',
+            appName:'Red Music',
+            webDir:'public',
+            server:{
+              url:'https://red-music.onrender.com',
+              cleartext:false,
+              androidScheme:'https',
+              allowNavigation:[
+                'red-music.onrender.com',
+                '*.onrender.com'
+              ]
+            }
+          },null,2)+'\n')"
+
+      - name: Save custom Android source
+        run: |
+          mkdir -p /tmp/redmusic-android-backup
+
+          if [ -d android/app/src/main ]; then
+            cp -R android/app/src/main /tmp/redmusic-android-backup/
+          fi
+
+      - name: Recreate Android platform
+        run: |
+          rm -rf android
+          npx cap add android
+
+      - name: Restore Red Music Android source
+        run: |
+          if [ -d /tmp/redmusic-android-backup/main ]; then
+            rm -rf android/app/src/main
+            cp -R /tmp/redmusic-android-backup/main android/app/src/main
+          fi
+
+      - name: Configure Android project
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("android/app/build.gradle")
+          text = p.read_text()
+
+          if "androidx.core:core-ktx" not in text:
+              text = text.replace(
+                  "dependencies {",
+                  """dependencies {
+              implementation 'androidx.core:core-ktx:1.15.0'
+              implementation 'androidx.media:media:1.7.0'
+          """
+              )
+
+          p.write_text(text)
+
+          root = Path("android/build.gradle")
+          root_text = root.read_text()
+
+          if "com.android.application" not in root_text:
+              print("Warning: Android Gradle configuration was generated differently.")
+
+          root.write_text(root_text)
+          PY
+
       - name: Sync Capacitor
-        run: npx cap sync android
+        run: |
+          npx cap sync android
 
       - name: Check Render
         run: |
