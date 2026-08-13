@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       # ==========================================
       # 1. Скачать проект
       # ==========================================
@@ -19,6 +20,7 @@ jobs:
         with:
           lfs: true
           fetch-depth: 1
+
 
       # ==========================================
       # 2. Java 17
@@ -29,21 +31,23 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+
       # ==========================================
       # 3. Node.js 20
-      # ВАЖНО: cache НЕ используем,
-      # потому что package-lock.json отсутствует
       # ==========================================
       - name: Установить Node.js
         uses: actions/setup-node@v5
         with:
           node-version: "20"
 
+
       # ==========================================
       # 4. Проверка проекта
       # ==========================================
       - name: Проверить проект
         run: |
+          set -e
+
           echo "===================================="
           echo "ПРОВЕРКА ПРОЕКТА"
           echo "===================================="
@@ -77,11 +81,14 @@ jobs:
           echo "Android-проект найден."
           echo "package.json найден."
 
+
       # ==========================================
       # 5. Проверка Media3 файлов
       # ==========================================
       - name: Проверить Media3 файлы
         run: |
+          set -e
+
           echo "===================================="
           echo "ПРОВЕРКА MEDIA3"
           echo "===================================="
@@ -109,8 +116,9 @@ jobs:
 
           echo "Media3 файлы найдены."
 
+
       # ==========================================
-      # 6. Проверка аудио
+      # 6. Проверка аудиофайлов
       # ==========================================
       - name: Проверить большие аудиофайлы
         run: |
@@ -126,12 +134,14 @@ jobs:
             -not -path "./.git/*" \
             | head -100 || true
 
+
       # ==========================================
       # 7. Установить npm зависимости
       # ==========================================
       - name: Установить зависимости
         run: |
           npm install --no-audit --no-fund --legacy-peer-deps
+
 
       # ==========================================
       # 8. Установить Capacitor Assets
@@ -140,8 +150,9 @@ jobs:
         run: |
           npm install @capacitor/assets --no-save --legacy-peer-deps
 
+
       # ==========================================
-      # 9. Проверить Media3 зависимости
+      # 9. Media3 зависимости
       # ==========================================
       - name: Проверить Media3 зависимости
         run: |
@@ -208,8 +219,9 @@ jobs:
           print(f"Media3 версия: {media3_version}")
           PY
 
+
       # ==========================================
-      # 10. Проверить AndroidManifest
+      # 10. AndroidManifest Media3
       # ==========================================
       - name: Проверить AndroidManifest для Media3
         run: |
@@ -265,12 +277,14 @@ jobs:
           print("AndroidManifest.xml проверен.")
           PY
 
+
       # ==========================================
-      # 11. Генерация иконок
+      # 11. Иконки Red Music
       # ==========================================
       - name: Сгенерировать иконку Red Music для Android
         run: |
           npx capacitor-assets generate --android
+
 
       # ==========================================
       # 12. Capacitor sync
@@ -279,39 +293,54 @@ jobs:
         run: |
           npx cap sync android
 
+
       # ==========================================
-      # 13. Проверка Gradle Wrapper
+      # 13. ПРИНУДИТЕЛЬНО УСТАНОВИТЬ GRADLE 8.2.1
       # ==========================================
-      - name: Проверить Android Gradle Wrapper
+      - name: Настроить Android Gradle Wrapper
         run: |
+          set -e
+
           echo "===================================="
-          echo "ПРОВЕРКА GRADLE WRAPPER"
+          echo "НАСТРОЙКА GRADLE WRAPPER"
           echo "===================================="
 
-          if [ ! -f "android/gradlew" ]; then
-            echo "ОШИБКА: android/gradlew не найден!"
-            exit 1
-          fi
+          mkdir -p android/gradle/wrapper
 
-          if [ ! -f "android/gradle/wrapper/gradle-wrapper.properties" ]; then
-            echo "ОШИБКА: gradle-wrapper.properties не найден!"
-            exit 1
-          fi
+          cat > android/gradle/wrapper/gradle-wrapper.properties <<'EOF'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2.1-bin.zip
+          networkTimeout=10000
+          validateDistributionUrl=true
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          EOF
 
           chmod +x android/gradlew
 
-          echo "Gradle Wrapper найден."
           echo
-          echo "Версия Gradle:"
+          echo "gradle-wrapper.properties:"
+          cat android/gradle/wrapper/gradle-wrapper.properties
+
+          echo
+          echo "Запуск Gradle Wrapper..."
+
           cd android
-          ./gradlew --version
+
+          ./gradlew --version --no-daemon
+
 
       # ==========================================
       # 14. Проверка Render
       # ==========================================
       - name: Проверить Render
         run: |
-          echo "Проверяем сервер Red Music..."
+          set -e
+
+          echo "===================================="
+          echo "ПРОВЕРКА RED MUSIC SERVER"
+          echo "===================================="
 
           curl --fail --silent --show-error \
             --max-time 30 \
@@ -325,11 +354,14 @@ jobs:
 
           echo
 
+
       # ==========================================
       # 15. Сборка APK
       # ==========================================
       - name: Собрать APK
         run: |
+          set -e
+
           chmod +x android/gradlew
 
           cd android
@@ -348,6 +380,7 @@ jobs:
             --no-daemon \
             --stacktrace
 
+
       # ==========================================
       # 16. Проверить APK
       # ==========================================
@@ -358,7 +391,6 @@ jobs:
           if [ ! -f "$APK" ]; then
             echo "ОШИБКА: APK не найден!"
 
-            echo "Содержимое build:"
             find android/app/build \
               -type f \
               | sort \
@@ -372,6 +404,7 @@ jobs:
           echo "===================================="
 
           ls -lh "$APK"
+
 
       # ==========================================
       # 17. Загрузить APK
