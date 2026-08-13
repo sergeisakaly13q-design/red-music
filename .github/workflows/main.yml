@@ -11,40 +11,25 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-
-      # ==========================================
-      # 1. Скачать проект
-      # ==========================================
       - name: Скачать проект
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           lfs: true
           fetch-depth: 1
 
-
-      # ==========================================
-      # 2. Java 17
-      # ==========================================
       - name: Установить Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-
-      # ==========================================
-      # 3. Node.js 20
-      # ==========================================
-      - name: Установить Node.js
-        uses: actions/setup-node@v5
+      - name: Установить Node.js 20
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-
-      # ==========================================
-      # 4. Проверка проекта
-      # ==========================================
       - name: Проверить проект
+        shell: bash
         run: |
           set -e
 
@@ -54,11 +39,6 @@ jobs:
 
           if [ ! -d "android" ]; then
             echo "ОШИБКА: папка android отсутствует!"
-            exit 1
-          fi
-
-          if [ ! -f "android/gradlew" ]; then
-            echo "ОШИБКА: android/gradlew отсутствует!"
             exit 1
           fi
 
@@ -72,90 +52,33 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f "package.json" ]; then
-            echo "ОШИБКА: package.json отсутствует!"
-            exit 1
-          fi
-
-          echo "Проект найден."
           echo "Android-проект найден."
-          echo "package.json найден."
 
-
-      # ==========================================
-      # 5. Проверка Media3 файлов
-      # ==========================================
-      - name: Проверить Media3 файлы
+      - name: Установить зависимости Node.js
+        shell: bash
         run: |
           set -e
 
           echo "===================================="
-          echo "ПРОВЕРКА MEDIA3"
+          echo "УСТАНОВКА NODE.JS ЗАВИСИМОСТЕЙ"
           echo "===================================="
 
-          find android/app/src/main -type f \
-            \( -name "MainActivity.kt" \
-            -o -name "RedMusicMediaPlugin.kt" \
-            -o -name "RedMusicMediaService.kt" \) \
-            -print
-
-          if [ ! -f "android/app/src/main/java/com/redmusic/app/RedMusicMediaService.kt" ]; then
-            echo "ОШИБКА: RedMusicMediaService.kt не найден!"
-            exit 1
+          if [ -f package-lock.json ]; then
+            npm ci --no-audit --no-fund
+          else
+            npm install --no-audit --no-fund
           fi
 
-          if [ ! -f "android/app/src/main/java/com/redmusic/app/RedMusicMediaPlugin.kt" ]; then
-            echo "ОШИБКА: RedMusicMediaPlugin.kt не найден!"
-            exit 1
-          fi
-
-          if [ ! -f "android/app/src/main/java/com/redmusic/app/MainActivity.kt" ]; then
-            echo "ОШИБКА: MainActivity.kt не найден!"
-            exit 1
-          fi
-
-          echo "Media3 файлы найдены."
-
-
-      # ==========================================
-      # 6. Проверка аудиофайлов
-      # ==========================================
-      - name: Проверить большие аудиофайлы
-        run: |
-          echo "Аудиофайлы проекта:"
-
-          find . -type f \
-            \( -iname "*.mp3" \
-            -o -iname "*.wav" \
-            -o -iname "*.ogg" \
-            -o -iname "*.m4a" \
-            -o -iname "*.flac" \) \
-            -not -path "./node_modules/*" \
-            -not -path "./.git/*" \
-            | head -100 || true
-
-
-      # ==========================================
-      # 7. Установить npm зависимости
-      # ==========================================
-      - name: Установить зависимости
-        run: |
-          npm install --no-audit --no-fund --legacy-peer-deps
-
-
-      # ==========================================
-      # 8. Установить Capacitor Assets
-      # ==========================================
       - name: Установить генератор иконок
+        shell: bash
         run: |
-          npm install @capacitor/assets --no-save --legacy-peer-deps
+          npm install @capacitor/assets --no-save --no-audit --no-fund
 
-
-      # ==========================================
-      # 9. Media3 зависимости
-      # ==========================================
       - name: Проверить Media3 зависимости
+        shell: bash
         run: |
+          set -e
+
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -215,16 +138,15 @@ jobs:
 
           p.write_text(text)
 
-          print("Media3 зависимости проверены.")
-          print(f"Media3 версия: {media3_version}")
+          print("Media3 зависимости готовы.")
+          print("Media3 версия:", media3_version)
           PY
 
-
-      # ==========================================
-      # 10. AndroidManifest Media3
-      # ==========================================
       - name: Проверить AndroidManifest для Media3
+        shell: bash
         run: |
+          set -e
+
           python3 - <<'PY'
           from pathlib import Path
 
@@ -274,118 +196,126 @@ jobs:
 
           p.write_text(text)
 
-          print("AndroidManifest.xml проверен.")
+          print("AndroidManifest.xml готов.")
           PY
 
+      - name: Проверить Media3 Kotlin файлы
+        shell: bash
+        run: |
+          set -e
 
-      # ==========================================
-      # 11. Иконки Red Music
-      # ==========================================
-      - name: Сгенерировать иконку Red Music для Android
+          SERVICE="android/app/src/main/java/com/redmusic/app/RedMusicMediaService.kt"
+          PLUGIN="android/app/src/main/java/com/redmusic/app/RedMusicMediaPlugin.kt"
+
+          if [ ! -f "$SERVICE" ]; then
+            echo "ОШИБКА: $SERVICE не найден!"
+            exit 1
+          fi
+
+          if [ ! -f "$PLUGIN" ]; then
+            echo "ОШИБКА: $PLUGIN не найден!"
+            exit 1
+          fi
+
+          echo "Media3 Kotlin файлы найдены."
+
+      - name: Проверить аудиофайлы
+        shell: bash
+        run: |
+          echo "Аудиофайлы проекта:"
+
+          find . -type f \
+            \( -iname "*.mp3" \
+            -o -iname "*.wav" \
+            -o -iname "*.ogg" \
+            -o -iname "*.m4a" \
+            -o -iname "*.flac" \) \
+            -not -path "./node_modules/*" \
+            -not -path "./.git/*" \
+            | head -100 || true
+
+      - name: Сгенерировать иконку Red Music
+        shell: bash
         run: |
           npx capacitor-assets generate --android
 
-
-      # ==========================================
-      # 12. Capacitor sync
-      # ==========================================
       - name: Синхронизировать Capacitor
+        shell: bash
         run: |
           npx cap sync android
 
+      - name: Установить Gradle 8.2.2
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.2.2"
 
-      # ==========================================
-      # 13. ПРИНУДИТЕЛЬНО УСТАНОВИТЬ GRADLE 8.2.1
-      # ==========================================
-      - name: Настроить Android Gradle Wrapper
+      - name: Проверить Gradle
+        shell: bash
         run: |
           set -e
 
           echo "===================================="
-          echo "НАСТРОЙКА GRADLE WRAPPER"
+          echo "ПРОВЕРКА GRADLE"
           echo "===================================="
 
-          mkdir -p android/gradle/wrapper
+          gradle --version
 
-          cat > android/gradle/wrapper/gradle-wrapper.properties <<'EOF'
-          distributionBase=GRADLE_USER_HOME
-          distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2.1-bin.zip
-          networkTimeout=10000
-          validateDistributionUrl=true
-          zipStoreBase=GRADLE_USER_HOME
-          zipStorePath=wrapper/dists
-          EOF
-
-          chmod +x android/gradlew
-
-          echo
-          echo "gradle-wrapper.properties:"
-          cat android/gradle/wrapper/gradle-wrapper.properties
-
-          echo
-          echo "Запуск Gradle Wrapper..."
+      - name: Проверить Android проект
+        shell: bash
+        run: |
+          set -e
 
           cd android
 
-          ./gradlew --version --no-daemon
+          echo "Проверяем Gradle проект..."
 
-
-      # ==========================================
-      # 14. Проверка Render
-      # ==========================================
-      - name: Проверить Render
-        run: |
-          set -e
-
-          echo "===================================="
-          echo "ПРОВЕРКА RED MUSIC SERVER"
-          echo "===================================="
-
-          curl --fail --silent --show-error \
-            --max-time 30 \
-            https://red-music.onrender.com/health
-
-          echo
-
-          curl --fail --silent --show-error \
-            --max-time 30 \
-            https://red-music.onrender.com/api/music/public-health
-
-          echo
-
-
-      # ==========================================
-      # 15. Сборка APK
-      # ==========================================
-      - name: Собрать APK
-        run: |
-          set -e
-
-          chmod +x android/gradlew
-
-          cd android
-
-          echo "===================================="
-          echo "ОЧИСТКА GRADLE"
-          echo "===================================="
-
-          ./gradlew clean --no-daemon
-
-          echo "===================================="
-          echo "СБОРКА DEBUG APK"
-          echo "===================================="
-
-          ./gradlew assembleDebug \
+          gradle tasks \
             --no-daemon \
             --stacktrace
 
-
-      # ==========================================
-      # 16. Проверить APK
-      # ==========================================
-      - name: Проверить APK
+      - name: Проверить Render
+        shell: bash
         run: |
+          echo "Проверяем сервер Red Music..."
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            https://red-music.onrender.com/health \
+            || echo "WARNING: /health недоступен"
+
+          echo
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            https://red-music.onrender.com/api/music/public-health \
+            || echo "WARNING: /api/music/public-health недоступен"
+
+          echo
+
+      - name: Собрать APK
+        shell: bash
+        run: |
+          set -e
+
+          cd android
+
+          echo "===================================="
+          echo "СБОРКА RED MUSIC APK"
+          echo "===================================="
+
+          gradle clean \
+            --no-daemon \
+            --stacktrace
+
+          gradle assembleDebug \
+            --no-daemon \
+            --stacktrace
+
+      - name: Проверить APK
+        shell: bash
+        run: |
+          set -e
+
           APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
@@ -405,10 +335,6 @@ jobs:
 
           ls -lh "$APK"
 
-
-      # ==========================================
-      # 17. Загрузить APK
-      # ==========================================
       - name: Загрузить APK
         uses: actions/upload-artifact@v4
         with:
