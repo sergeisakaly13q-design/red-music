@@ -1,0 +1,6 @@
+{
+  "appId": "com.redmusic.app",
+  "appName": "Red Music",
+  "webDir": "public",
+  "androidScheme": "https"
+}
