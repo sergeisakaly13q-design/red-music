@@ -1,0 +1,118 @@
+name: Build Red Music APK
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Скачать проект
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          fetch-depth: 1
+
+      - name: Установить Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Установить Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Установить Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
+
+      - name: Проверить большие аудиофайлы
+        run: |
+          echo "Аудиофайлы, попавшие в checkout:"
+          find . -type f \( \
+            -iname "*.mp3" -o \
+            -iname "*.wav" -o \
+            -iname "*.ogg" -o \
+            -iname "*.m4a" -o \
+            -iname "*.flac" \
+          \) \
+          -not -path "./node_modules/*" \
+          -not -path "./.git/*" \
+          | head -100 || true
+
+      - name: Установить зависимости
+        run: npm install --no-audit --no-fund
+
+      - name: Создать локальную конфигурацию Capacitor
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          fs.writeFileSync('capacitor.config.json', JSON.stringify({
+            appId: 'com.redmusic.app',
+            appName: 'Red Music',
+            webDir: 'public',
+            androidScheme: 'https'
+          }, null, 2) + '\\n');
+          NODE
+
+      - name: Добавить Android платформу, если её нет
+        run: |
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+
+      - name: Установить генератор иконок
+        run: npm install @capacitor/assets --no-save --no-audit --no-fund
+
+      - name: Сгенерировать иконку Red Music для Android
+        run: npx capacitor-assets generate --android
+
+      - name: Синхронизировать Capacitor
+        run: npx cap sync android
+
+      - name: Проверить Android конфигурацию
+        run: |
+          echo "=== android/build.gradle ==="
+          cat android/build.gradle
+
+          echo "=== android/app/build.gradle ==="
+          cat android/app/build.gradle
+
+          echo "=== Gradle ==="
+          gradle --version
+
+      - name: Проверить Render
+        run: |
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/health
+          echo
+          curl --fail --silent --show-error \
+            https://red-music.onrender.com/api/music/public-health
+          echo
+
+      - name: Собрать APK
+        run: |
+          cd android
+          gradle clean --no-daemon
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Проверить APK
+        run: |
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          echo "APK успешно создан:"
+          ls -lh android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Загрузить APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Red-Music-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
