@@ -24,7 +24,7 @@ jobs:
           java-version: "17"
 
       - name: Установить Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -60,7 +60,7 @@ jobs:
             appName: 'Red Music',
             webDir: 'public',
             androidScheme: 'https'
-          }, null, 2) + '\\n');
+          }, null, 2) + '\n');
           NODE
 
       - name: Добавить Android платформу, если её нет
