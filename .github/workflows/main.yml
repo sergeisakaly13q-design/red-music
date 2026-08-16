@@ -2,14 +2,13 @@ name: Build Red Music APK
 
 on:
   push:
-    branches:
-      - main
+  branches:
+    - main
   workflow_dispatch:
 
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-
     steps:
       - name: Скачать проект
         uses: actions/checkout@v4
@@ -27,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
+          # Убрали cache: npm, так как нет package-lock.json
 
       - name: Установить Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
@@ -37,16 +36,7 @@ jobs:
       - name: Проверить большие аудиофайлы
         run: |
           echo "Аудиофайлы, попавшие в checkout:"
-          find . -type f \( \
-            -iname "*.mp3" -o \
-            -iname "*.wav" -o \
-            -iname "*.ogg" -o \
-            -iname "*.m4a" -o \
-            -iname "*.flac" \
-          \) \
-          -not -path "./node_modules/*" \
-          -not -path "./.git/*" \
-          | head -100 || true
+          find . -type f \( -iname "*.mp3" -o -iname "*.wav" -o -iname "*.ogg" -o -iname "*.m4a" -o -iname "*.flac" \) -not -path "./node_modules/*" -not -path "./.git/*" | head -100 || true
 
       - name: Установить зависимости
         run: npm install --no-audit --no-fund
@@ -55,7 +45,6 @@ jobs:
         run: |
           node <<'NODE'
           const fs = require('fs');
-
           const config = {
             appId: 'com.redmusic.app',
             appName: 'Red Music',
@@ -66,11 +55,10 @@ jobs:
               androidScheme: 'https',
               allowNavigation: [
                 'red-music.onrender.com',
-                '*.onrender.com'
+                '.onrender.com'
               ]
             }
           };
-
           fs.writeFileSync(
             'capacitor.config.json',
             JSON.stringify(config, null, 2) + '\n'
@@ -96,20 +84,16 @@ jobs:
         run: |
           echo "=== android/build.gradle ==="
           cat android/build.gradle
-
           echo "=== android/app/build.gradle ==="
           cat android/app/build.gradle
-
           echo "=== Gradle ==="
           gradle --version
 
       - name: Проверить Render
         run: |
-          curl --fail --silent --show-error \
-            https://red-music.onrender.com/health
+          curl --fail --silent --show-error https://red-music.onrender.com/health
           echo
-          curl --fail --silent --show-error \
-            https://red-music.onrender.com/api/music/public-health
+          curl --fail --silent --show-error https://red-music.onrender.com/api/music/public-health
           echo
 
       - name: Собрать APK
