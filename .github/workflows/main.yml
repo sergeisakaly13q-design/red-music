@@ -2,8 +2,8 @@ name: Build Red Music APK
 
 on:
   push:
-  branches:
-    - main
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          # Убрали cache: npm, так как нет package-lock.json
+          # Кэширование npm отключено, так как в проекте нет package-lock.json
 
       - name: Установить Gradle 8.7
         uses: gradle/actions/setup-gradle@v4
