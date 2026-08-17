@@ -20,6 +20,7 @@ class RedMusicMediaPlugin : Plugin() {
         val artwork = call.getString("artwork") ?: ""
 
         RedMusicMediaService.ensure(getContext())
+
         RedMusicMediaService.updateMetadata(
             title,
             artist,
@@ -37,6 +38,7 @@ class RedMusicMediaPlugin : Plugin() {
         val duration = call.getDouble("duration") ?: 0.0
 
         RedMusicMediaService.ensure(getContext())
+
         RedMusicMediaService.updatePlayback(
             playing,
             position,
