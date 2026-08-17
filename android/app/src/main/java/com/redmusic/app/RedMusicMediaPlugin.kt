@@ -7,6 +7,7 @@ import com.getcapacitor.annotation.CapacitorPlugin
 
 @CapacitorPlugin(name = "RedMusicMedia")
 class RedMusicMediaPlugin : Plugin() {
+
     override fun load() {
         instance = this
     }
@@ -17,18 +18,31 @@ class RedMusicMediaPlugin : Plugin() {
         val artist = call.getString("artist") ?: "Red Music"
         val album = call.getString("album") ?: "Red Music"
         val artwork = call.getString("artwork") ?: ""
-        RedMusicMediaService.ensure(requireContext())
-        RedMusicMediaService.updateMetadata(title, artist, album, artwork)
+
+        RedMusicMediaService.ensure(getContext())
+        RedMusicMediaService.updateMetadata(
+            title,
+            artist,
+            album,
+            artwork
+        )
+
         call.resolve()
     }
 
     @com.getcapacitor.PluginMethod
     fun updatePlayback(call: PluginCall) {
-        val playing = call.getBoolean("playing", false)
-        val position = call.getDouble("position", 0.0)
-        val duration = call.getDouble("duration", 0.0)
-        RedMusicMediaService.ensure(requireContext())
-        RedMusicMediaService.updatePlayback(playing, position, duration)
+        val playing = call.getBoolean("playing") ?: false
+        val position = call.getDouble("position") ?: 0.0
+        val duration = call.getDouble("duration") ?: 0.0
+
+        RedMusicMediaService.ensure(getContext())
+        RedMusicMediaService.updatePlayback(
+            playing,
+            position,
+            duration
+        )
+
         call.resolve()
     }
 
@@ -45,9 +59,18 @@ class RedMusicMediaPlugin : Plugin() {
     fun dispatchAction(action: String, position: Long = -1L) {
         val data = JSObject()
         data.put("action", action)
-        if (position >= 0) data.put("position", position)
+
+        if (position >= 0) {
+            data.put("position", position)
+        }
+
         try {
-            bridge.webView.evaluateJavascript("window.__RMNativeMediaAction && window.__RMNativeMediaAction(${data.toString()});", null)
-        } catch (_: Exception) {}
+            bridge.webView.evaluateJavascript(
+                "window.__RMNativeMediaAction && window.__RMNativeMediaAction(${data});",
+                null
+            )
+        } catch (_: Exception) {
+            // Игнорируем ошибки WebView при закрытии приложения
+        }
     }
 }
