@@ -86,67 +86,8 @@ async function notifyAdmin(text) {
   catch (error) { console.error("[telegram] Ошибка уведомления админа:", error.message); }
 }
 
-function initializeTelegramUserBalance(db, telegramId) {
-  const telegramIdStr = String(telegramId);
-  const existing = db.prepare("SELECT * FROM telegram_user_balance WHERE telegram_id = ?").get(telegramIdStr);
-  if (!existing) {
-    db.prepare(`
-      INSERT INTO telegram_user_balance (telegram_id, test_stars, real_stars, created_at, updated_at)
-      VALUES (?, 0, 0, datetime('now'), datetime('now'))
-    `).run(telegramIdStr);
-  }
-}
-
-function getTelegramUserBalance(db, telegramId) {
-  initializeTelegramUserBalance(db, telegramId);
-  return db.prepare("SELECT * FROM telegram_user_balance WHERE telegram_id = ?").get(String(telegramId)) || {
-    telegram_id: String(telegramId),
-    test_stars: 0,
-    real_stars: 0
-  };
-}
-
-function addTestStars(db, telegramId, amount) {
-  initializeTelegramUserBalance(db, telegramId);
-  const telegramIdStr = String(telegramId);
-  db.prepare(`
-    UPDATE telegram_user_balance
-    SET test_stars = test_stars + ?, updated_at = datetime('now')
-    WHERE telegram_id = ?
-  `).run(amount, telegramIdStr);
-  return getTelegramUserBalance(db, telegramId);
-}
-
-function spendStars(db, telegramId, amount) {
-  initializeTelegramUserBalance(db, telegramId);
-  const balance = getTelegramUserBalance(db, telegramId);
-  const totalStars = (balance.test_stars || 0) + (balance.real_stars || 0);
-  if (totalStars < amount) {
-    return { success: false, message: `Недостаточно звёзд. Требуется: ${amount}, у вас есть: ${totalStars}` };
-  }
-  const telegramIdStr = String(telegramId);
-  let remaining = amount;
-  if (balance.real_stars >= remaining) {
-    db.prepare(`
-      UPDATE telegram_user_balance
-      SET real_stars = real_stars - ?, updated_at = datetime('now')
-      WHERE telegram_id = ?
-    `).run(remaining, telegramIdStr);
-  } else {
-    const useRealStars = balance.real_stars || 0;
-    remaining -= useRealStars;
-    db.prepare(`
-      UPDATE telegram_user_balance
-      SET real_stars = 0, test_stars = test_stars - ?, updated_at = datetime('now')
-      WHERE telegram_id = ?
-    `).run(remaining, telegramIdStr);
-  }
-  return { success: true, message: "Звёзды потрачены успешно" };
-}
-
 function upsertTelegramUser(db, tgUser) {
   const telegramId = String(tgUser.id);
-  initializeTelegramUserBalance(db, telegramId);
   const existing = db.prepare("SELECT * FROM telegram_users WHERE telegram_id = ?").get(telegramId);
   const username = String(tgUser.username || "");
   const firstName = String(tgUser.first_name || "");
@@ -158,6 +99,16 @@ function upsertTelegramUser(db, tgUser) {
         (telegram_id, username, first_name, last_name, first_seen_at, last_seen_at)
       VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(telegramId, username, firstName, lastName);
+
+    // Инициализируем баланс сразу после создания пользователя
+    try {
+      db.prepare(`
+        INSERT OR IGNORE INTO telegram_user_balance (telegram_id, test_stars, real_stars, created_at, updated_at)
+        VALUES (?, 0, 0, datetime('now'), datetime('now'))
+      `).run(telegramId);
+    } catch (e) {
+      console.error("[telegram] Ошибка при создании баланса:", e.message);
+    }
 
     notifyAdmin(
       `<b>🆕 НОВЫЙ ПОЛЬЗОВАТЕЛЬ</b>\n\n` +
@@ -176,6 +127,63 @@ function upsertTelegramUser(db, tgUser) {
     WHERE telegram_id = ?
   `).run(username, firstName, lastName, telegramId);
   return false;
+}
+
+function getTelegramUserBalance(db, telegramId) {
+  const telegramIdStr = String(telegramId);
+  try {
+    const balance = db.prepare("SELECT * FROM telegram_user_balance WHERE telegram_id = ?").get(telegramIdStr);
+    if (balance) return balance;
+  } catch (e) {
+    console.error("[telegram] Ошибка при получении баланса:", e.message);
+  }
+  return { telegram_id: telegramIdStr, test_stars: 0, real_stars: 0 };
+}
+
+function addTestStars(db, telegramId, amount) {
+  const telegramIdStr = String(telegramId);
+  try {
+    db.prepare(`
+      UPDATE telegram_user_balance
+      SET test_stars = test_stars + ?, updated_at = datetime('now')
+      WHERE telegram_id = ?
+    `).run(amount, telegramIdStr);
+    return getTelegramUserBalance(db, telegramId);
+  } catch (e) {
+    console.error("[telegram] Ошибка при добавлении звёзд:", e.message);
+    return getTelegramUserBalance(db, telegramId);
+  }
+}
+
+function spendStars(db, telegramId, amount) {
+  const balance = getTelegramUserBalance(db, telegramId);
+  const totalStars = (balance.test_stars || 0) + (balance.real_stars || 0);
+  if (totalStars < amount) {
+    return { success: false, message: `Недостаточно звёзд. Требуется: ${amount}, у вас есть: ${totalStars}` };
+  }
+  const telegramIdStr = String(telegramId);
+  let remaining = amount;
+  try {
+    if (balance.real_stars >= remaining) {
+      db.prepare(`
+        UPDATE telegram_user_balance
+        SET real_stars = real_stars - ?, updated_at = datetime('now')
+        WHERE telegram_id = ?
+      `).run(remaining, telegramIdStr);
+    } else {
+      const useRealStars = balance.real_stars || 0;
+      remaining -= useRealStars;
+      db.prepare(`
+        UPDATE telegram_user_balance
+        SET real_stars = 0, test_stars = test_stars - ?, updated_at = datetime('now')
+        WHERE telegram_id = ?
+      `).run(remaining, telegramIdStr);
+    }
+  } catch (e) {
+    console.error("[telegram] Ошибка при трате звёзд:", e.message);
+    return { success: false, message: `Ошибка: ${e.message}` };
+  }
+  return { success: true, message: "Звёзды потрачены успешно" };
 }
 
 function mainKeyboard() {
