@@ -8,6 +8,7 @@ const PLANS = {
 
 const BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const ADMIN_CHAT_ID = String(process.env.TELEGRAM_ADMIN_CHAT_ID || "").trim();
+const OWNER_TELEGRAM_ID = String(process.env.OWNER_TELEGRAM_ID || "7665540013").trim();
 const EXPLICIT_BOT_USERNAME = String(process.env.TELEGRAM_BOT_USERNAME || "").trim().replace(/^@/, "");
 const WEBAPP_URL = String(process.env.WEBAPP_URL || "https://red-music.onrender.com").trim().replace(/\/$/, "");
 // Официальный бот Red Music. Используется только как аварийный fallback, если
@@ -36,6 +37,7 @@ function fmtDate(value) {
 }
 function nowIso() { return new Date().toISOString(); }
 function planFromCode(code) { return PLANS[String(code || "")] || null; }
+function isOwner(telegramId) { return String(telegramId) === OWNER_TELEGRAM_ID; }
 
 async function telegramApi(method, body = {}) {
   if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN не задан");
@@ -84,8 +86,67 @@ async function notifyAdmin(text) {
   catch (error) { console.error("[telegram] Ошибка уведомления админа:", error.message); }
 }
 
+function initializeTelegramUserBalance(db, telegramId) {
+  const telegramIdStr = String(telegramId);
+  const existing = db.prepare("SELECT * FROM telegram_user_balance WHERE telegram_id = ?").get(telegramIdStr);
+  if (!existing) {
+    db.prepare(`
+      INSERT INTO telegram_user_balance (telegram_id, test_stars, real_stars, created_at, updated_at)
+      VALUES (?, 0, 0, datetime('now'), datetime('now'))
+    `).run(telegramIdStr);
+  }
+}
+
+function getTelegramUserBalance(db, telegramId) {
+  initializeTelegramUserBalance(db, telegramId);
+  return db.prepare("SELECT * FROM telegram_user_balance WHERE telegram_id = ?").get(String(telegramId)) || {
+    telegram_id: String(telegramId),
+    test_stars: 0,
+    real_stars: 0
+  };
+}
+
+function addTestStars(db, telegramId, amount) {
+  initializeTelegramUserBalance(db, telegramId);
+  const telegramIdStr = String(telegramId);
+  db.prepare(`
+    UPDATE telegram_user_balance
+    SET test_stars = test_stars + ?, updated_at = datetime('now')
+    WHERE telegram_id = ?
+  `).run(amount, telegramIdStr);
+  return getTelegramUserBalance(db, telegramId);
+}
+
+function spendStars(db, telegramId, amount) {
+  initializeTelegramUserBalance(db, telegramId);
+  const balance = getTelegramUserBalance(db, telegramId);
+  const totalStars = (balance.test_stars || 0) + (balance.real_stars || 0);
+  if (totalStars < amount) {
+    return { success: false, message: `Недостаточно звёзд. Требуется: ${amount}, у вас есть: ${totalStars}` };
+  }
+  const telegramIdStr = String(telegramId);
+  let remaining = amount;
+  if (balance.real_stars >= remaining) {
+    db.prepare(`
+      UPDATE telegram_user_balance
+      SET real_stars = real_stars - ?, updated_at = datetime('now')
+      WHERE telegram_id = ?
+    `).run(remaining, telegramIdStr);
+  } else {
+    const useRealStars = balance.real_stars || 0;
+    remaining -= useRealStars;
+    db.prepare(`
+      UPDATE telegram_user_balance
+      SET real_stars = 0, test_stars = test_stars - ?, updated_at = datetime('now')
+      WHERE telegram_id = ?
+    `).run(remaining, telegramIdStr);
+  }
+  return { success: true, message: "Звёзды потрачены успешно" };
+}
+
 function upsertTelegramUser(db, tgUser) {
   const telegramId = String(tgUser.id);
+  initializeTelegramUserBalance(db, telegramId);
   const existing = db.prepare("SELECT * FROM telegram_users WHERE telegram_id = ?").get(telegramId);
   const username = String(tgUser.username || "");
   const firstName = String(tgUser.first_name || "");
@@ -121,10 +182,11 @@ function mainKeyboard() {
   return { inline_keyboard: [
     [{ text: "🎵 Купить подписку", callback_data: "buy_now" }],
     [{ text: "💎 Тарифы", callback_data: "plans" }],
-    [{ text: "👤 Моя подписка", callback_data: "my_subscription" }],
+    [{ text: "👤 Профиль", callback_data: "profile" }],
     [{ text: "❓ Помощь", callback_data: "help" }],
   ]};
 }
+
 function plansKeyboard() {
   return { inline_keyboard: [
     [{ text: "⭐ 7 дней — 100 Stars", callback_data: "buy:7" }],
@@ -133,13 +195,14 @@ function plansKeyboard() {
     [{ text: "↩️ Главное меню", callback_data: "home" }],
   ]};
 }
+
 function helpText() {
   return (
     `<b>❓ Помощь Red Music</b>\n\n` +
     `Здесь можно оформить VIP-подписку через Telegram Stars ⭐ и управлять ей.\n\n` +
     `<b>🎵 Купить подписку</b> — оформить или продлить VIP\n` +
     `<b>💎 Тарифы</b> — посмотреть все доступные планы\n` +
-    `<b>👤 Моя подписка</b> — статус и срок действия VIP\n\n` +
+    `<b>👤 Профиль</b> — посмотреть баланс и статус подписки\n\n` +
     `<b>🛠 Остались вопросы или что-то не работает?</b>\n` +
     `По любым вопросам, ошибкам и проблемам с оплатой обращайтесь к администраторам:\n\n` +
     `👤 @rawsjsjsj\n` +
@@ -147,6 +210,7 @@ function helpText() {
     `Мы поможем как можно скорее! 💬`
   );
 }
+
 async function sendHome(chatId, firstName = "") {
   const name = firstName ? `, ${escapeHtml(firstName)}` : "";
   await sendMessage(chatId,
@@ -154,6 +218,7 @@ async function sendHome(chatId, firstName = "") {
     `Здесь можно оформить подписку Red Music через Telegram Stars ⭐.\n\n` +
     `<b>Выберите действие:</b>`, { reply_markup: mainKeyboard() });
 }
+
 async function sendPlans(chatId, intro = "<b>💎 Тарифы Red Music</b>") {
   await sendMessage(chatId,
     `${intro}\n\n` +
@@ -162,6 +227,35 @@ async function sendPlans(chatId, intro = "<b>💎 Тарифы Red Music</b>") {
     `⭐ <b>Навсегда</b> — 999 Stars\n\nВыберите нужный тариф:`,
     { reply_markup: plansKeyboard() });
 }
+
+async function sendProfile(db, chatId, telegramId) {
+  const balance = getTelegramUserBalance(db, telegramId);
+  const totalStars = (balance.test_stars || 0) + (balance.real_stars || 0);
+  const linked = db.prepare(`
+    SELECT u.* FROM telegram_users tu
+    JOIN users u ON u.id = tu.app_user_id
+    WHERE tu.telegram_id = ?
+  `).get(String(telegramId)) || null;
+  const roles = linked ? db.prepare(`
+    SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
+    WHERE ur.user_id = ?
+  `).all(linked.id).map(row => row.name) : [];
+  const hasVip = roles.includes("VIP");
+
+  await sendMessage(chatId,
+    `<b>👤 Ваш профиль</b>\n\n` +
+    `<b>💰 Баланс:</b> ⭐ ${totalStars} звёзд\n` +
+    `  └ Тестовых: ⭐ ${balance.test_stars || 0}\n` +
+    `  └ Реальных: ⭐ ${balance.real_stars || 0}\n\n` +
+    `<b>📊 Статус подписки:</b> ${hasVip ? "🟢 VIP активна" : "⚪ Обычный пользователь"}\n` +
+    (linked && linked.vip_until ? `<b>Окончание:</b> ${escapeHtml(fmtDate(linked.vip_until))}\n` : "") +
+    `\n<b>Выберите действие:</b>`,
+    { reply_markup: { inline_keyboard: [
+      [{ text: "🎵 Купить подписку", callback_data: "buy_now" }],
+      [{ text: "↩️ Главное меню", callback_data: "home" }],
+    ]}});
+}
+
 function getLinkedAppUser(db, telegramId) {
   return db.prepare(`
     SELECT u.* FROM telegram_users tu
@@ -169,16 +263,19 @@ function getLinkedAppUser(db, telegramId) {
     WHERE tu.telegram_id = ?
   `).get(String(telegramId)) || null;
 }
+
 function getAppRoles(db, userId) {
   return db.prepare(`
     SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
     WHERE ur.user_id = ?
   `).all(userId).map(row => row.name);
 }
+
 function ensureVipRole(db, userId) {
   const vip = db.prepare("SELECT id FROM roles WHERE name = 'VIP'").get();
   if (vip) db.prepare("INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)").run(userId, vip.id);
 }
+
 function calculateExpiry(db, userId, days) {
   const user = db.prepare("SELECT vip_until FROM users WHERE id = ?").get(userId);
   const now = Date.now();
@@ -186,6 +283,7 @@ function calculateExpiry(db, userId, days) {
   const base = Number.isFinite(current) && current > now ? current : now;
   return new Date(base + days * 86400000).toISOString();
 }
+
 function activateAppSubscription(db, appUserId, plan) {
   ensureVipRole(db, appUserId);
   if (plan.days === null) {
@@ -196,61 +294,91 @@ function activateAppSubscription(db, appUserId, plan) {
   db.prepare("UPDATE users SET vip_until = ? WHERE id = ?").run(expires, appUserId);
   return expires;
 }
+
 async function sendInvoiceForPlan(db, chatId, telegramId, planCode) {
   const plan = planFromCode(planCode);
   if (!plan) return;
-  const linked = db.prepare(
-    "SELECT pending_link_token FROM telegram_users WHERE telegram_id = ?"
-  ).get(String(telegramId));
-  const token = String(linked?.pending_link_token || "");
-  const payload = `rm|${plan.code}|${token}`;
-  await telegramApi("sendInvoice", {
-    chat_id: chatId,
-    title: plan.label,
-    description: `Подписка Red Music: ${plan.name}. Оплата через Telegram Stars.`,
-    payload,
-    currency: "XTR",
-    prices: [{ label: plan.label, amount: plan.stars }],
-    provider_token: "",
-    start_parameter: `rm-${plan.code}`,
-  });
+  const balance = getTelegramUserBalance(db, telegramId);
+  const totalStars = (balance.test_stars || 0) + (balance.real_stars || 0);
+  
+  if (totalStars >= plan.stars) {
+    // Есть тестовые звёзды, можно купить через них
+    await sendMessage(chatId,
+      `<b>⭐ Подтверждение покупки</b>\n\n` +
+      `<b>Тариф:</b> ${escapeHtml(plan.name)}\n` +
+      `<b>Цена:</b> ⭐ ${plan.stars}\n` +
+      `<b>Ваш баланс:</b> ⭐ ${totalStars}\n\n` +
+      `Подтвердить покупку за тестовые звёзды?`,
+      { reply_markup: { inline_keyboard: [
+        [{ text: `✅ Подтвердить`, callback_data: `confirm_test:${plan.code}` }],
+        [{ text: "❌ Отменить", callback_data: "plans" }],
+      ]}});
+  } else {
+    // Предложить купить через обычный способ
+    const linked = db.prepare(
+      "SELECT pending_link_token FROM telegram_users WHERE telegram_id = ?"
+    ).get(String(telegramId));
+    const token = String(linked?.pending_link_token || "");
+    const payload = `rm|${plan.code}|${token}`;
+    await telegramApi("sendInvoice", {
+      chat_id: chatId,
+      title: plan.label,
+      description: `Подписка Red Music: ${plan.name}. Оплата через Telegram Stars.`,
+      payload,
+      currency: "XTR",
+      prices: [{ label: plan.label, amount: plan.stars }],
+      provider_token: "",
+      start_parameter: `rm-${plan.code}`,
+    });
+  }
 }
-async function sendSelectedPlan(chatId, plan) {
-  await sendMessage(chatId,
-    `<b>🎵 Red Music VIP</b>\n\n` +
-    `<b>Тариф:</b> ${escapeHtml(plan.name)}\n` +
-    `<b>Цена:</b> ⭐ ${plan.stars}\n\n` +
-    `Нажмите кнопку ниже для оплаты через Telegram Stars.`,
-    { reply_markup: { inline_keyboard: [
-      [{ text: `⭐ Оплатить ${plan.stars} Stars`, callback_data: `buy:${plan.code}` }],
-      [{ text: "💎 Другие тарифы", callback_data: "plans" }],
-    ]}});
-}
-async function showMySubscription(db, chatId, telegramId) {
-  const linked = getLinkedAppUser(db, telegramId);
-  const tgSub = db.prepare(`
-    SELECT * FROM telegram_purchases
-    WHERE telegram_id = ? AND status = 'paid'
-    ORDER BY purchased_at DESC LIMIT 1
-  `).get(String(telegramId));
 
-  if (!linked && !tgSub) {
-    await sendMessage(chatId, `<b>👤 Моя подписка</b>\n\nПодписка пока не найдена.\n\nОформите её через меню.`,
-      { reply_markup: mainKeyboard() });
+async function confirmTestPurchase(db, chatId, telegramId, planCode) {
+  const plan = planFromCode(planCode);
+  if (!plan) return;
+  
+  const spendResult = spendStars(db, telegramId, plan.stars);
+  if (!spendResult.success) {
+    await sendMessage(chatId, `<b>❌ Ошибка</b>\n\n${spendResult.message}`);
     return;
   }
-  const roles = linked ? getAppRoles(db, linked.id) : [];
-  const active = linked ? roles.includes("VIP") : !!tgSub;
-  const expiry = linked ? linked.vip_until : tgSub?.expires_at;
+
+  const linked = getLinkedAppUser(db, telegramId);
+  let appUserId = null;
+  let expiresAt = null;
+
+  if (linked) {
+    appUserId = linked.id;
+    expiresAt = activateAppSubscription(db, appUserId, plan);
+  }
+
+  const balance = getTelegramUserBalance(db, telegramId);
+  const tg = db.prepare("SELECT username FROM telegram_users WHERE telegram_id = ?").get(String(telegramId));
+  const username = tg?.username ? `@${tg.username}` : "отсутствует";
+  const ending = expiresAt ? fmtDate(expiresAt) : "Без ограничения";
+
+  await notifyAdmin(
+    `<b>✅ Тестовая покупка подтверждена</b>\n\n` +
+    `<b>Сумма:</b> ⭐ ${plan.stars} (тестовые)\n` +
+    `<b>Срок:</b> ${escapeHtml(plan.name)}\n` +
+    `<b>Telegram ID:</b> <code>${escapeHtml(String(telegramId))}</code>\n` +
+    `<b>Username:</b> ${escapeHtml(username)}\n` +
+    `<b>Окончание:</b> ${escapeHtml(ending)}\n` +
+    (appUserId ? `<b>Привязано к аккаунту Red Music:</b> Да` : `<b>Привязано к аккаунту Red Music:</b> Нет`)
+  );
+
   await sendMessage(chatId,
-    `<b>👤 Моя подписка</b>\n\n` +
-    `<b>Статус:</b> ${active ? "🟢 Активна" : "⚪ Не активна"}\n` +
-    `<b>Тариф:</b> ${escapeHtml(tgSub?.plan_name || "Red Music VIP")}\n` +
-    `<b>Окончание:</b> ${escapeHtml(expiry ? fmtDate(expiry) : "Бессрочно")}\n` +
-    (linked ? `<b>Аккаунт Red Music:</b> @${escapeHtml(linked.username)}` : ""),
+    `<b>✅ Покупка завершена!</b>\n\n` +
+    `<b>Подписка:</b> ${escapeHtml(plan.name)}\n` +
+    `<b>Оплачено:</b> ⭐ ${plan.stars}\n` +
+    `<b>Окончание:</b> ${escapeHtml(ending)}\n\n` +
+    (appUserId
+      ? `Подписка активирована в Red Music автоматически.`
+      : `Оплата сохранена. Чтобы привязать её к аккаунту Red Music, начните покупку из приложения.`),
     { reply_markup: mainKeyboard() });
 }
-async function handleSuccessfulPayment(db, message) {
+
+async function sendSuccessfulPayment(db, message) {
   const payment = message.successful_payment;
   const telegramId = String(message.from.id);
   const payload = String(payment.invoice_payload || "");
@@ -322,14 +450,16 @@ async function handleSuccessfulPayment(db, message) {
       : `Оплата сохранена. Чтобы привязать её к аккаунту Red Music, начните покупку из приложения.`),
     { reply_markup: mainKeyboard() });
 }
+
 async function handleMessage(db, message) {
   if (!message.from || !message.chat) return;
   upsertTelegramUser(db, message.from);
 
   if (message.successful_payment) {
-    await handleSuccessfulPayment(db, message);
+    await sendSuccessfulPayment(db, message);
     return;
   }
+
   const text = String(message.text || "").trim();
   if (!text) return;
 
@@ -337,17 +467,62 @@ async function handleMessage(db, message) {
     await sendMessage(message.chat.id, `<b>Ваш Telegram ID:</b> <code>${escapeHtml(message.from.id)}</code>`);
     return;
   }
+
+  if (/^\/give\b/i.test(text)) {
+    if (!isOwner(message.from.id)) {
+      await sendMessage(message.chat.id, `<b>❌ Ошибка</b>\n\nЭта команда доступна только Owner.`);
+      return;
+    }
+
+    const parts = text.split(/\s+/);
+    if (parts.length < 3) {
+      await sendMessage(message.chat.id,
+        `<b>❌ Неверный формат</b>\n\n` +
+        `Используйте: <code>/give [user_id] [количество_звёзд]</code>\n\n` +
+        `Пример: <code>/give 123456789 500</code>`);
+      return;
+    }
+
+    const targetUserId = String(parts[1]);
+    const amount = parseInt(parts[2], 10);
+
+    if (isNaN(amount) || amount <= 0) {
+      await sendMessage(message.chat.id, `<b>❌ Ошибка</b>\n\nКоличество звёзд должно быть положительным числом.`);
+      return;
+    }
+
+    try {
+      const before = getTelegramUserBalance(db, targetUserId);
+      const after = addTestStars(db, targetUserId, amount);
+
+      await sendMessage(message.chat.id,
+        `<b>✅ Тестовые звёзды выданы</b>\n\n` +
+        `<b>Пользователю:</b> <code>${escapeHtml(targetUserId)}</code>\n` +
+        `<b>Количество:</b> ⭐ ${amount}\n\n` +
+        `<b>Баланс до:</b> ⭐ ${(before.test_stars || 0) + (before.real_stars || 0)}\n` +
+        `<b>Баланс после:</b> ⭐ ${(after.test_stars || 0) + (after.real_stars || 0)}`);
+
+      await notifyAdmin(
+        `<b>💫 Тестовые звёзды выданы</b>\n\n` +
+        `<b>Owner ID:</b> <code>${escapeHtml(String(message.from.id))}</code>\n` +
+        `<b>Выдано пользователю:</b> <code>${escapeHtml(targetUserId)}</code>\n` +
+        `<b>Количество:</b> ⭐ ${amount}`
+      );
+    } catch (error) {
+      console.error("[telegram] Ошибка /give:", error.message);
+      await sendMessage(message.chat.id, `<b>❌ Ошибка при выдаче звёзд</b>\n\n${error.message}`);
+    }
+    return;
+  }
+
   if (/^\/start\b/i.test(text)) {
     const param = text.split(/\s+/, 2)[1] || "";
     if (param) {
-      // Гостевая покупка: ссылка вида t.me/Bot?start=plan_7 — сразу открывает
-      // нужный тариф, без привязки к аккаунту Red Music (например, если
-      // пользователь не вошёл в приложение или его сессия недоступна).
       const guestMatch = /^plan_(7|30|life)$/.exec(param);
       if (guestMatch) {
         const plan = planFromCode(guestMatch[1]);
         if (plan) {
-          await sendSelectedPlan(message.chat.id, plan);
+          await sendPlans(message.chat.id, `<b>🎵 Red Music VIP</b>\n\n<b>Тариф:</b> ${escapeHtml(plan.name)}`);
           return;
         }
       }
@@ -367,7 +542,7 @@ async function handleMessage(db, message) {
 
         const plan = planFromCode(tokenRow.plan_code);
         if (plan) {
-          await sendSelectedPlan(message.chat.id, plan);
+          await sendPlans(message.chat.id, `<b>🎵 Red Music VIP</b>\n\n<b>Тариф:</b> ${escapeHtml(plan.name)}`);
           return;
         }
       }
@@ -375,12 +550,15 @@ async function handleMessage(db, message) {
     await sendHome(message.chat.id, message.from.first_name || "");
     return;
   }
+
   if (/^\/help\b/i.test(text)) {
     await sendMessage(message.chat.id, helpText(), { reply_markup: mainKeyboard() });
     return;
   }
+
   await sendHome(message.chat.id, message.from.first_name || "");
 }
+
 async function handleCallback(db, callback) {
   const from = callback.from;
   const chatId = callback.message?.chat?.id;
@@ -392,12 +570,16 @@ async function handleCallback(db, callback) {
   if (data === "home") return sendHome(chatId, from.first_name || "");
   if (data === "plans") return sendPlans(chatId, "<b>💎 Тарифы Red Music</b>");
   if (data === "buy_now") return sendPlans(chatId, "<b>🎵 Оформление подписки Red Music</b>");
-  if (data === "my_subscription") return showMySubscription(db, chatId, from.id);
+  if (data === "profile") return sendProfile(db, chatId, from.id);
   if (data === "help") return sendMessage(chatId, helpText(), { reply_markup: mainKeyboard() });
 
-  const match = /^buy:(7|30|life)$/.exec(data);
-  if (match) await sendInvoiceForPlan(db, chatId, from.id, match[1]);
+  const buyMatch = /^buy:(7|30|life)$/.exec(data);
+  if (buyMatch) return sendInvoiceForPlan(db, chatId, from.id, buyMatch[1]);
+
+  const confirmMatch = /^confirm_test:(7|30|life)$/.exec(data);
+  if (confirmMatch) return confirmTestPurchase(db, chatId, from.id, confirmMatch[1]);
 }
+
 async function processUpdate(db, update) {
   if (update.callback_query) return handleCallback(db, update.callback_query);
   if (update.pre_checkout_query) {
@@ -410,6 +592,7 @@ async function processUpdate(db, update) {
   }
   if (update.message) return handleMessage(db, update.message);
 }
+
 async function pollingLoop(db) {
   if (polling || stopped) return;
   polling = true;
@@ -432,6 +615,7 @@ async function pollingLoop(db) {
   }
   polling = false;
 }
+
 async function startTelegramBot(db) {
   if (!BOT_TOKEN) {
     console.warn("[telegram] TELEGRAM_BOT_TOKEN не задан. Telegram-бот отключён.");
@@ -451,9 +635,11 @@ async function startTelegramBot(db) {
     await telegramApi("setMyCommands", { commands: [
       { command: "start", description: "Открыть главное меню" },
       { command: "id", description: "Показать Telegram ID" },
+      { command: "give", description: "[Owner] Выдать тестовые звёзды" },
       { command: "help", description: "Помощь" },
     ]});
     console.log(`[telegram] Бот @${botUsername} запущен`);
+    console.log(`[telegram] Owner ID: ${OWNER_TELEGRAM_ID}`);
     pollingLoop(db).catch(error => console.error("[telegram] Polling fatal:", error));
     return { enabled: true, username: botUsername };
   } catch (error) {
@@ -461,7 +647,19 @@ async function startTelegramBot(db) {
     return { enabled: false, username: botUsername };
   }
 }
+
 function getPlans() { return Object.values(PLANS).map(plan => ({ ...plan })); }
 function createLinkToken() { return crypto.randomBytes(24).toString("base64url"); }
 function getWebAppUrl() { return WEBAPP_URL; }
-module.exports = { PLANS, startTelegramBot, getBotUsername, createLinkToken, getPlans, getWebAppUrl };
+
+module.exports = {
+  PLANS,
+  startTelegramBot,
+  getBotUsername,
+  createLinkToken,
+  getPlans,
+  getWebAppUrl,
+  getTelegramUserBalance,
+  addTestStars,
+  isOwner
+};
