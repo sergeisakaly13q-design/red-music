@@ -11,14 +11,15 @@ const ADMIN_CHAT_ID = String(process.env.TELEGRAM_ADMIN_CHAT_ID || "").trim();
 const OWNER_TELEGRAM_ID = String(process.env.OWNER_TELEGRAM_ID || "7665540013").trim();
 const EXPLICIT_BOT_USERNAME = String(process.env.TELEGRAM_BOT_USERNAME || "").trim().replace(/^@/, "");
 const WEBAPP_URL = String(process.env.WEBAPP_URL || "https://red-music.onrender.com").trim().replace(/\/$/, "");
-// Официальный бот Red Music. Используется только как аварийный fallback, если
-// getMe() ещё не выполнялся и TELEGRAM_BOT_USERNAME не задан в .env.
 const OFFICIAL_BOT_USERNAME = "RedMusicPremiumBot";
 
 let botUsername = EXPLICIT_BOT_USERNAME;
 let polling = false;
 let stopped = false;
 let updateOffset = 0;
+
+// Кэш для отслеживания состояния пользователя (ожидание ввода App User ID)
+const userStates = new Map();
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -100,7 +101,6 @@ function upsertTelegramUser(db, tgUser) {
       VALUES (?, ?, ?, ?, datetime('now'), datetime('now'))
     `).run(telegramId, username, firstName, lastName);
 
-    // Инициализируем баланс сразу после создания пользователя
     try {
       db.prepare(`
         INSERT OR IGNORE INTO telegram_user_balance (telegram_id, test_stars, real_stars, created_at, updated_at)
@@ -351,39 +351,93 @@ async function confirmTestPurchase(db, chatId, telegramId, planCode) {
     return;
   }
 
-  const linked = getLinkedAppUser(db, telegramId);
-  let appUserId = null;
-  let expiresAt = null;
-
-  if (linked) {
-    appUserId = linked.id;
-    expiresAt = activateAppSubscription(db, appUserId, plan);
-  }
-
-  const balance = getTelegramUserBalance(db, telegramId);
-  const tg = db.prepare("SELECT username FROM telegram_users WHERE telegram_id = ?").get(String(telegramId));
-  const username = tg?.username ? `@${tg.username}` : "отсутствует";
-  const ending = expiresAt ? fmtDate(expiresAt) : "Без ограничения";
-
-  await notifyAdmin(
-    `<b>✅ Тестовая покупка подтверждена</b>\n\n` +
-    `<b>Сумма:</b> ⭐ ${plan.stars} (тестовые)\n` +
-    `<b>Срок:</b> ${escapeHtml(plan.name)}\n` +
-    `<b>Telegram ID:</b> <code>${escapeHtml(String(telegramId))}</code>\n` +
-    `<b>Username:</b> ${escapeHtml(username)}\n` +
-    `<b>Окончание:</b> ${escapeHtml(ending)}\n` +
-    (appUserId ? `<b>Привязано к аккаунту Red Music:</b> Да` : `<b>Привязано к аккаунту Red Music:</b> Нет`)
-  );
+  // Сохраняем информацию о покупке для следующего шага
+  userStates.set(String(telegramId), {
+    waitingForAppUserId: true,
+    plan,
+    purchaseTime: Date.now()
+  });
 
   await sendMessage(chatId,
-    `<b>✅ Покупка завершена!</b>\n\n` +
+    `<b>✅ Звёзды списаны!</b>\n\n` +
     `<b>Подписка:</b> ${escapeHtml(plan.name)}\n` +
-    `<b>Оплачено:</b> ⭐ ${plan.stars}\n` +
-    `<b>Окончание:</b> ${escapeHtml(ending)}\n\n` +
-    (appUserId
-      ? `Подписка активирована в Red Music автоматически.`
-      : `Оплата сохранена. Чтобы привязать её к аккаунту Red Music, начните покупку из приложения.`),
-    { reply_markup: mainKeyboard() });
+    `<b>Цена:</b> ⭐ ${plan.stars}\n\n` +
+    `Теперь напишите ваш <b>App User ID</b> из приложения Red Music\n` +
+    `чтобы активировать подписку.\n\n` +
+    `<i>Это число, которое вы видите в профиле приложения</i>`);
+}
+
+async function handleAppUserIdInput(db, chatId, telegramId, userInput) {
+  const state = userStates.get(String(telegramId));
+  if (!state || !state.waitingForAppUserId) {
+    await sendMessage(chatId, `<b>❌ Ошибка</b>\n\nСначала купите подписку.`);
+    return;
+  }
+
+  // Проверяем, не истёк ли таймаут (30 минут)
+  if (Date.now() - state.purchaseTime > 30 * 60 * 1000) {
+    userStates.delete(String(telegramId));
+    await sendMessage(chatId, `<b>❌ Время истекло</b>\n\nПопробуйте купить подписку снова.`);
+    return;
+  }
+
+  const appUserId = parseInt(userInput.trim(), 10);
+  if (isNaN(appUserId) || appUserId <= 0) {
+    await sendMessage(chatId, `<b>❌ Ошибка</b>\n\nID должен быть положительным числом.\n\nПожалуйста, напишите корректный ID.`);
+    return;
+  }
+
+  // Проверяем, существует ли такой пользователь в приложении
+  const appUser = db.prepare("SELECT id, username, display_name FROM users WHERE id = ?").get(appUserId);
+  if (!appUser) {
+    await sendMessage(chatId, `<b>❌ Пользователь не найден</b>\n\nID <code>${appUserId}</code> не существует в Red Music.\n\nПожалуйста, проверьте ID и напишите снова.`);
+    return;
+  }
+
+  const plan = state.plan;
+  
+  try {
+    // Привязываем аккаунты
+    db.prepare(`
+      UPDATE telegram_users
+      SET app_user_id = ?, pending_link_token = NULL
+      WHERE telegram_id = ?
+    `).run(appUserId, String(telegramId));
+
+    // Активируем ВИП подписку
+    const expiresAt = activateAppSubscription(db, appUserId, plan);
+    const ending = expiresAt ? fmtDate(expiresAt) : "Без ограничения";
+
+    // Удаляем состояние
+    userStates.delete(String(telegramId));
+
+    // Сообщение пользователю
+    await sendMessage(chatId,
+      `<b>✅ Подписка активирована!</b>\n\n` +
+      `<b>Пользователь:</b> ${escapeHtml(appUser.display_name || appUser.username)}\n` +
+      `<b>Подписка:</b> ${escapeHtml(plan.name)}\n` +
+      `<b>Окончание:</b> ${escapeHtml(ending)}\n\n` +
+      `Зайдите в приложение Red Music чтобы увидеть активный ВИП статус!`,
+      { reply_markup: mainKeyboard() });
+
+    // Уведомление админу
+    const tg = db.prepare("SELECT username FROM telegram_users WHERE telegram_id = ?").get(String(telegramId));
+    const username = tg?.username ? `@${tg.username}` : "отсутствует";
+    
+    await notifyAdmin(
+      `<b>✅ Тестовая подписка активирована</b>\n\n` +
+      `<b>Сумма:</b> ⭐ ${plan.stars} (тестовые)\n` +
+      `<b>Срок:</b> ${escapeHtml(plan.name)}\n` +
+      `<b>Telegram ID:</b> <code>${escapeHtml(String(telegramId))}</code>\n` +
+      `<b>Username:</b> ${escapeHtml(username)}\n` +
+      `<b>App User ID:</b> <code>${appUserId}</code>\n` +
+      `<b>Аккаунт Red Music:</b> ${escapeHtml(appUser.display_name || appUser.username)}\n` +
+      `<b>Окончание:</b> ${escapeHtml(ending)}`
+    );
+  } catch (error) {
+    console.error("[telegram] Ошибка при активации подписки:", error.message);
+    await sendMessage(chatId, `<b>❌ Ошибка</b>\n\nНе удалось активировать подписку.\n\n${error.message}`);
+  }
 }
 
 async function sendSuccessfulPayment(db, message) {
@@ -470,6 +524,13 @@ async function handleMessage(db, message) {
 
   const text = String(message.text || "").trim();
   if (!text) return;
+
+  // Проверяем, ожидает ли пользователь ввода App User ID
+  const state = userStates.get(String(message.from.id));
+  if (state && state.waitingForAppUserId) {
+    await handleAppUserIdInput(db, message.chat.id, message.from.id, text);
+    return;
+  }
 
   if (/^\/id\b/i.test(text)) {
     await sendMessage(message.chat.id, `<b>Ваш Telegram ID:</b> <code>${escapeHtml(message.from.id)}</code>`);
