@@ -212,3 +212,13 @@ CREATE TABLE IF NOT EXISTS telegram_purchases (
 );
 CREATE INDEX IF NOT EXISTS idx_telegram_purchases_telegram ON telegram_purchases(telegram_id, purchased_at DESC);
 CREATE INDEX IF NOT EXISTS idx_telegram_purchases_app_user ON telegram_purchases(app_user_id, purchased_at DESC);
+
+-- Telegram user balance: тестовые звёзды (от админа) и реальные звёзды (от покупок)
+CREATE TABLE IF NOT EXISTS telegram_user_balance (
+  telegram_id TEXT PRIMARY KEY REFERENCES telegram_users(telegram_id) ON DELETE CASCADE,
+  test_stars  INTEGER NOT NULL DEFAULT 0,
+  real_stars  INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_telegram_balance_updated ON telegram_user_balance(updated_at DESC);
