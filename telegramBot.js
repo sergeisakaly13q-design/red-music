@@ -9,6 +9,7 @@ const PLANS = {
 const BOT_TOKEN = String(process.env.TELEGRAM_BOT_TOKEN || "").trim();
 const ADMIN_CHAT_ID = String(process.env.TELEGRAM_ADMIN_CHAT_ID || "").trim();
 const EXPLICIT_BOT_USERNAME = String(process.env.TELEGRAM_BOT_USERNAME || "").trim().replace(/^@/, "");
+const WEBAPP_URL = String(process.env.WEBAPP_URL || "https://red-music.onrender.com").trim().replace(/\/$/, "");
 // Официальный бот Red Music. Используется только как аварийный fallback, если
 // getMe() ещё не выполнялся и TELEGRAM_BOT_USERNAME не задан в .env.
 const OFFICIAL_BOT_USERNAME = "RedMusicPremiumBot";
@@ -461,4 +462,6 @@ async function startTelegramBot(db) {
   }
 }
 function getPlans() { return Object.values(PLANS).map(plan => ({ ...plan })); }
-module.exports = { PLANS, startTelegramBot, getBotUsername, createLinkToken: () => crypto.randomBytes(24).toString("base64url"), getPlans };
+function createLinkToken() { return crypto.randomBytes(24).toString("base64url"); }
+function getWebAppUrl() { return WEBAPP_URL; }
+module.exports = { PLANS, startTelegramBot, getBotUsername, createLinkToken, getPlans, getWebAppUrl };
