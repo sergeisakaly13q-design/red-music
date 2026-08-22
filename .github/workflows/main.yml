@@ -77,7 +77,7 @@ jobs:
         run: npm install
 
       - name: Build Windows EXE
-        run: npm run desktop:build -- --publish never
+        run: npm run desktop:build
 
       - name: Upload Windows EXE
         uses: actions/upload-artifact@v4
