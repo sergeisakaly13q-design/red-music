@@ -64,6 +64,7 @@
     },
     "portable": {
       "artifactName": "Red-Music-${version}-portable.${ext}"
-    }
+    },
+    "publish": "never"
   }
 }
