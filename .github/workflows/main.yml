@@ -1,4 +1,4 @@
-name: Red Music - Build APK and EXE
+name: Red Music - Build APK, EXE and iOS
 
 on:
   push:
@@ -85,4 +85,49 @@ jobs:
           name: Red-Music-Windows
           path: |
             dist/*.exe
+          if-no-files-found: error
+
+  build-ios:
+    name: Build iOS App
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Add Capacitor iOS
+        run: npx cap add ios
+
+      - name: Sync Capacitor iOS
+        run: npx cap sync ios
+
+      - name: Build iOS Simulator App
+        run: |
+          xcodebuild \
+            -workspace ios/App/App.xcworkspace \
+            -scheme App \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Find iOS App
+        run: |
+          find ios/App/build -type d -name '*.app' -print || true
+
+      - name: Upload iOS Simulator App
+        uses: actions/upload-artifact@v4
+        with:
+          name: Red-Music-iOS-Simulator
+          path: ios/App/build/**/*.app
           if-no-files-found: error
