@@ -1,4 +1,4 @@
-name: Red Music - Build APK
+name: Red Music - Build APK and EXE
 
 on:
   push:
@@ -62,4 +62,37 @@ jobs:
         with:
           name: Red-Music-APK
           path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm install
+
+      - name: Build Windows EXE
+        run: npm run desktop:build
+
+      - name: Find EXE
+        shell: powershell
+        run: |
+          Write-Host "Windows EXE files:"
+          Get-ChildItem -Path dist -Filter *.exe -Recurse | Select-Object FullName
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Red-Music-Windows
+          path: dist/**/*.exe
           if-no-files-found: error
