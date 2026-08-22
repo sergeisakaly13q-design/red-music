@@ -1,0 +1,23 @@
+name: Red Music database backup
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create encrypted backup on Render
+        env:
+          RED_MUSIC_URL: ${{ secrets.RED_MUSIC_URL }}
+          BACKUP_SECRET: ${{ secrets.BACKUP_SECRET }}
+        run: |
+          set -euo pipefail
+          test -n "$RED_MUSIC_URL"
+          test -n "$BACKUP_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --max-time 120 \
+            -X POST "$RED_MUSIC_URL/api/internal/database-backup" \
+            -H "X-Backup-Secret: $BACKUP_SECRET"
