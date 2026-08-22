@@ -83,12 +83,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Red-Music-Windows
-          path: |
-            dist/*.exe
+          path: dist/*.exe
           if-no-files-found: error
 
   build-ios:
-    name: Build iOS App
+    name: Build iOS Simulator App
     runs-on: macos-14
 
     steps:
@@ -118,16 +117,19 @@ jobs:
             -configuration Debug \
             -sdk iphonesimulator \
             -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/App/build \
             CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Find iOS App
+      - name: Verify iOS App
         run: |
-          find ios/App/build -type d -name '*.app' -print || true
+          test -d ios/App/build/Build/Products/Debug-iphonesimulator/App.app
+          find ios/App/build/Build/Products/Debug-iphonesimulator -maxdepth 1 -type d -name '*.app' -print
 
       - name: Upload iOS Simulator App
         uses: actions/upload-artifact@v4
         with:
           name: Red-Music-iOS-Simulator
-          path: ios/App/build/**/*.app
+          path: ios/App/build/Build/Products/Debug-iphonesimulator/App.app
           if-no-files-found: error
