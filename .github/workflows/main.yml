@@ -1,4 +1,4 @@
-name: Red Music - Build APK, EXE and iOS
+name: Red Music - Build APK and EXE
 
 on:
   push:
@@ -83,53 +83,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Red-Music-Windows
-          path: dist/*.exe
+          path: |
+            dist/*.exe
           if-no-files-found: error
 
-  build-ios:
-    name: Build iOS Simulator App
-    runs-on: macos-14
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Install npm dependencies
-        run: npm install
-
-      - name: Add Capacitor iOS
-        run: npx cap add ios
-
-      - name: Sync Capacitor iOS
-        run: npx cap sync ios
-
-      - name: Build iOS Simulator App
-        run: |
-          xcodebuild \
-            -workspace ios/App/App.xcworkspace \
-            -scheme App \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath ios/App/build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            build
-
-      - name: Verify iOS App
-        run: |
-          test -d ios/App/build/Build/Products/Debug-iphonesimulator/App.app
-          find ios/App/build/Build/Products/Debug-iphonesimulator -maxdepth 1 -type d -name '*.app' -print
-
-      - name: Upload iOS Simulator App
-        uses: actions/upload-artifact@v4
-        with:
-          name: Red-Music-iOS-Simulator
-          path: ios/App/build/Build/Products/Debug-iphonesimulator/App.app
-          if-no-files-found: error
