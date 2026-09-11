@@ -1,0 +1,43 @@
+const { Pool } = require("pg");
+const fs = require("fs");
+const path = require("path");
+
+// На Render переменная DATABASE_URL создаётся автоматически при подключении
+// PostgreSQL-базы к сервису (см. render.yaml). Локально — задайте её в .env
+// (см. .env.example) или поднимите свой Postgres.
+if (!process.env.DATABASE_URL) {
+  console.warn(
+    "[db] ВНИМАНИЕ: переменная окружения DATABASE_URL не задана. " +
+    "Заполните .env (см. .env.example) или задайте её на Render."
+  );
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Render требует SSL для управляемого Postgres, но сертификат самоподписанный
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes("render.com")
+    ? { rejectUnauthorized: false }
+    : (process.env.PGSSL === "true" ? { rejectUnauthorized: false } : false),
+});
+
+async function ensureSchema() {
+  const schemaPath = path.join(__dirname, "schema.sql");
+  const sql = fs.readFileSync(schemaPath, "utf8");
+  await pool.query(sql);
+
+  // ID 1 = owner (как и было в демо-версии на localStorage), ID 2 тоже получает OWNER
+  // если такие пользователи уже существуют — просто гарантируем им роль OWNER.
+  const roleRes = await pool.query("SELECT id FROM roles WHERE name = 'OWNER'");
+  if (roleRes.rows.length) {
+    const ownerRoleId = roleRes.rows[0].id;
+    await pool.query(
+      `INSERT INTO user_roles (user_id, role_id)
+       SELECT id, $1 FROM users WHERE id IN (1,2)
+       ON CONFLICT DO NOTHING`,
+      [ownerRoleId]
+    );
+  }
+  console.log("[db] Схема применена/проверена.");
+}
+
+module.exports = { pool, ensureSchema };
